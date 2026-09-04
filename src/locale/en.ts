@@ -195,7 +195,7 @@ export const en: LocaleMessages = {
       noActiveSessions: 'No active pair sessions.\nUse `!pair start` to begin.',
       activeSessionsTitle: 'Active Pair Sessions',
       noPendingIssues: 'No pending issues.',
-      usage: 'Usage: `!pair run <taskId> [project]`',
+      usage: 'Usage: `!pair run <taskId> [project] [-- <description>]`',
       sessionStarted: 'Pair session started: {{thread}}',
       taskStartTitle: 'Pair task started: {{title}}',
       sessionStartMsg: 'Pair session started.',
@@ -212,7 +212,7 @@ export const en: LocaleMessages = {
       cancelNotFound: 'Session not found or already ended: `{{id}}`',
       noHistory: 'No pair session history.',
       historyTitle: 'Pair Session History',
-      helpText: '**Worker/Reviewer pair commands:**\n`!pair` - Current pair session status\n`!pair start [taskId]` - Start pair session\n`!pair run <taskId> [project]` - Direct pair run\n`!pair stop [sessionId]` - Stop session\n`!pair history [n]` - Recent n history\n`!pair stats` - View statistics',
+      helpText: '**Worker/Reviewer pair commands:**\n`!pair` - Current pair session status\n`!pair start [taskId]` - Start pair session\n`!pair run <taskId> [project] [-- <description>]` - Direct pair run\n`!pair stop [sessionId]` - Stop session\n`!pair history [n]` - Recent n history\n`!pair stats` - View statistics',
       stats: {
         title: 'Pair Mode Statistics',
         totalSessions: '**Total sessions:** {{n}}',
@@ -294,7 +294,7 @@ export const en: LocaleMessages = {
 **Worker/Reviewer Pair**
 \`!pair\` - Pair session status
 \`!pair start [taskId]\` - Start pair session
-\`!pair run <taskId> [project]\` - Direct pair run
+\`!pair run <taskId> [project] [-- <description>]\` - Direct pair run
 \`!pair stop [sessionId]\` - Stop session
 \`!pair history [n]\` - View history
 \`!pair stats\` - View statistics

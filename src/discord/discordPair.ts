@@ -17,9 +17,12 @@ import * as worker from '../agents/worker.js';
 import * as reviewer from '../agents/reviewer.js';
 import * as pairMetrics from '../agents/pairMetrics.js';
 import * as pairWebhook from '../agents/pairWebhook.js';
+import * as gitTracker from '../support/gitTracker.js';
 
 import {
   pairModeConfig,
+  isRepositoryAllowedInChannel,
+  repositoryForMessageChannel,
 } from './discordCore.js';
 import { t, getDateLocale } from '../locale/index.js';
 import { safeConsole as console } from '../support/safeLog.js';
@@ -57,11 +60,21 @@ export async function handlePair(msg: Message, args: string[]): Promise<void> {
     return;
   }
 
-  // !pair run <taskId> <project> - Direct pair execution
+  // !pair run <taskId> <project> [-- <description>] - Direct pair execution
   if (subCommand === 'run') {
     const taskId = args[1];
-    const project = args[2] || '~/dev';
-    await handlePairRun(msg, taskId, project);
+    const descriptionSeparator = args.indexOf('--');
+    const project = args[2] && args[2] !== '--'
+      ? args[2]
+      : repositoryForMessageChannel(msg) ?? '~/dev';
+    const taskDescription = descriptionSeparator >= 0
+      ? args.slice(descriptionSeparator + 1).join(' ').trim()
+      : undefined;
+    if (descriptionSeparator >= 0 && !taskDescription) {
+      await msg.reply(t('discord.pair.usage'));
+      return;
+    }
+    await handlePairRun(msg, taskId, project, taskDescription);
     return;
   }
 
@@ -216,6 +229,10 @@ async function handlePairStart(msg: Message, taskId?: string): Promise<void> {
   const projectPath = task.project?.name
     ? dev.resolveRepoPath(task.project.name) || '~/dev'
     : '~/dev';
+  if (!isRepositoryAllowedInChannel(msg, projectPath)) {
+    await msg.reply('⛔ This task belongs to a different project channel.');
+    return;
+  }
 
   await startPairSession(msg, {
     taskId: task.identifier || task.id,
@@ -226,9 +243,14 @@ async function handlePairStart(msg: Message, taskId?: string): Promise<void> {
 }
 
 /**
- * !pair run <taskId> [project] - Direct pair execution
+ * !pair run <taskId> [project] [-- <description>] - Direct pair execution
  */
-async function handlePairRun(msg: Message, taskId: string, project: string): Promise<void> {
+async function handlePairRun(
+  msg: Message,
+  taskId: string,
+  project: string,
+  inlineDescription?: string,
+): Promise<void> {
   if (!taskId) {
     await msg.reply(t('discord.pair.usage'));
     return;
@@ -236,16 +258,23 @@ async function handlePairRun(msg: Message, taskId: string, project: string): Pro
 
   // Verify project path
   const projectPath = dev.resolveRepoPath(project) || project;
+  if (!isRepositoryAllowedInChannel(msg, projectPath)) {
+    await msg.reply('⛔ This project is not allowed in the current Discord channel.');
+    return;
+  }
 
   // Fetch issue info from Linear
   let taskTitle = taskId;
-  let taskDescription = '';
+  let taskDescription = inlineDescription ?? '';
 
   try {
     const issue = await linear.getIssue(taskId);
     if (issue) {
       taskTitle = issue.title;
-      taskDescription = issue.description || '';
+      // An explicit Discord instruction is authoritative for this direct-run
+      // command. Preserve the tracker description for the existing ID-only
+      // form, where no inline instruction was supplied.
+      if (inlineDescription === undefined) taskDescription = issue.description || '';
     }
   } catch {
     // Continue even if Linear lookup fails (use taskId as title)
@@ -266,6 +295,18 @@ async function startPairSession(
   msg: Message,
   options: agentPair.CreatePairSessionOptions
 ): Promise<void> {
+  // Both !pair run and !pair start share the operator's worktree. Refuse to
+  // launch either path when WIP exists or Git cannot prove the tree is clean.
+  try {
+    if (await gitTracker.isDirty(options.projectPath)) {
+      await msg.reply('⛔ Pair runs require a clean working tree. Existing uncommitted changes are protected; use an isolated worktree before retrying.');
+      return;
+    }
+  } catch {
+    await msg.reply('⛔ Unable to verify the working tree state. Pair execution was not started to protect local changes.');
+    return;
+  }
+
   const channel = msg.channel as TextChannel;
 
   // Apply defaults from pairModeConfig
@@ -359,7 +400,9 @@ async function runPairLoop(sessionId: string, thread: ThreadChannel): Promise<vo
       taskDescription: session.taskDescription,
       projectPath: session.projectPath,
       previousFeedback,
-      timeoutMs: 300000, // 5 minutes
+      adapterName: pairModeConfig?.roles?.worker?.adapter,
+      model: pairModeConfig?.roles?.worker?.model,
+      timeoutMs: pairModeConfig?.workerTimeoutMs ?? 300000,
       issueIdentifier: session.taskId,
     });
 
@@ -412,7 +455,10 @@ async function runPairLoop(sessionId: string, thread: ThreadChannel): Promise<vo
       taskDescription: session.taskDescription,
       workerResult,
       projectPath: session.projectPath,
-      timeoutMs: 300000, // 5 minutes
+      timeoutMs: pairModeConfig?.reviewerTimeoutMs ?? 300000,
+      adapterName: pairModeConfig?.roles?.reviewer?.adapter,
+      model: pairModeConfig?.roles?.reviewer?.model,
+      readOnly: true,
     });
 
     session = agentPair.getPairSession(sessionId);

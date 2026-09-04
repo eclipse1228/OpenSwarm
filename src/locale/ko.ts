@@ -195,7 +195,7 @@ export const ko: LocaleMessages = {
       noActiveSessions: '👥 활성 페어 세션이 없습니다.\n`!pair start` 로 시작하세요.',
       activeSessionsTitle: '👥 활성 페어 세션',
       noPendingIssues: '❌ 대기 중인 이슈가 없습니다.',
-      usage: '사용법: `!pair run <taskId> [project]`',
+      usage: '사용법: `!pair run <taskId> [project] [-- <description>]`',
       sessionStarted: '👥 페어 세션 시작됨: {{thread}}',
       taskStartTitle: '📋 페어 작업 시작: {{title}}',
       sessionStartMsg: '페어 세션이 시작되었습니다.',
@@ -212,7 +212,7 @@ export const ko: LocaleMessages = {
       cancelNotFound: '❌ 세션을 찾을 수 없거나 이미 종료됨: `{{id}}`',
       noHistory: '📚 페어 세션 히스토리가 없습니다.',
       historyTitle: '📚 페어 세션 히스토리',
-      helpText: '**👥 Worker/Reviewer 페어 명령어:**\n`!pair` - 현재 페어 세션 상태\n`!pair start [taskId]` - 페어 세션 시작\n`!pair run <taskId> [project]` - 직접 페어 실행\n`!pair stop [sessionId]` - 세션 중지\n`!pair history [n]` - 최근 n개 히스토리\n`!pair stats` - 통계 조회',
+      helpText: '**👥 Worker/Reviewer 페어 명령어:**\n`!pair` - 현재 페어 세션 상태\n`!pair start [taskId]` - 페어 세션 시작\n`!pair run <taskId> [project] [-- <description>]` - 직접 페어 실행\n`!pair stop [sessionId]` - 세션 중지\n`!pair history [n]` - 최근 n개 히스토리\n`!pair stats` - 통계 조회',
       stats: {
         title: '📊 페어 모드 통계',
         totalSessions: '**총 세션:** {{n}}개',
@@ -294,7 +294,7 @@ export const ko: LocaleMessages = {
 **Worker/Reviewer 페어**
 \`!pair\` - 페어 세션 상태
 \`!pair start [taskId]\` - 페어 세션 시작
-\`!pair run <taskId> [project]\` - 직접 페어 실행
+\`!pair run <taskId> [project] [-- <description>]\` - 직접 페어 실행
 \`!pair stop [sessionId]\` - 세션 중지
 \`!pair history [n]\` - 히스토리 확인
 \`!pair stats\` - 통계 확인

@@ -45,7 +45,7 @@ function getConfigSearchPaths(): string[] {
 
 const DEFAULT_HEARTBEAT_INTERVAL = 30 * 60 * 1000; // 30 minutes
 const DEFAULT_GITHUB_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes
-const AdapterNameSchema = z.enum(['codex', 'codex-responses', 'gpt', 'local', 'lmstudio', 'openrouter', 'atlascloud', 'claude', 'cc-router', 'cursor']);
+const AdapterNameSchema = z.enum(['codex', 'codex-responses', 'gpt', 'local', 'lmstudio', 'openrouter', 'atlascloud', 'upstage', 'opencode-go', 'claude', 'cc-router', 'cursor']);
 
 // Zod Schemas
 
@@ -54,6 +54,11 @@ const AgentSessionSchema = z.object({
   projectPath: z.string().min(1, 'Project path is required'),
   heartbeatInterval: z.number().positive().optional(),
   linearLabel: z.string().optional(),
+  /** Project-scoped Discord channel for task discussion and approvals. */
+  // Environment interpolation represents an unset optional variable as ''. It
+  // is normalized to undefined in transformConfig, so accept it here rather
+  // than making `openswarm validate` require Discord before setup is complete.
+  discordChannelId: z.string().optional(),
   enabled: z.boolean().default(true),
   paused: z.boolean().default(false),
 });
@@ -62,6 +67,8 @@ const DiscordConfigSchema = z.object({
   token: z.string().min(1, 'Discord token is required'),
   channelId: z.string().min(1, 'Discord channel ID is required'),
   webhookUrl: z.string().optional(),
+  /** Agent name → project channel ID. The top-level channel remains the operations hub. */
+  projectChannelIds: z.record(z.string(), z.string().min(1)).default({}),
 }).optional();
 
 const LinearConfigSchema = z.object({
@@ -305,6 +312,8 @@ const AutonomousConfigSchema = z.object({
   includeBacklog: z.boolean().optional(),
   /** Model configuration (legacy) */
   models: ModelConfigSchema,
+  /** Reject paid OpenRouter models and retain the configured free reviewer when switching providers. */
+  openRouterFreeOnly: z.boolean().default(false),
   /** Worker timeout (ms). 0/unset = use the pipeline's per-stage ceiling
    *  (stageTimeoutMs) — it is NO LONGER "unlimited": an unbounded stage could hang
    *  the whole daemon. Set a positive value to override. (INT-2521) */
@@ -369,8 +378,8 @@ const AutonomousConfigSchema = z.object({
     // primary — a policy whose primary the schema rejects cannot match the
     // running adapter, which silently disables routing (README documents the
     // equality requirement).
-    primary: z.enum(['codex', 'codex-responses', 'cc-router', 'cursor', 'gpt', 'openrouter', 'atlascloud', 'lmstudio', 'local', 'claude']).default('codex'),
-    fallbacks: z.array(z.enum(['cc-router', 'cursor', 'codex', 'codex-responses'])).default(['cc-router', 'cursor']),
+    primary: AdapterNameSchema.default('codex'),
+    fallbacks: z.array(AdapterNameSchema).default(['cc-router', 'cursor']),
     allowReasons: z.array(z.enum(['quota', 'infra', 'capability'])).default(['quota', 'infra', 'capability']),
   }).optional(),
   periodicReviews: z.array(z.object({
@@ -662,6 +671,9 @@ function transformConfig(raw: RawConfig): SwarmConfig {
     discordToken: raw.discord?.token ?? '',
     discordChannelId: raw.discord?.channelId ?? '',
     discordWebhookUrl: raw.discord?.webhookUrl,
+    discordProjectChannelIds: Object.fromEntries(
+      Object.entries(raw.discord?.projectChannelIds ?? {}).filter(([, channelId]) => Boolean(channelId)),
+    ),
     notifications: raw.notifications
       ? {
           channel: raw.notifications.channel,
@@ -684,6 +696,10 @@ function transformConfig(raw: RawConfig): SwarmConfig {
       projectPath: expandPath(agent.projectPath),
       heartbeatInterval: agent.heartbeatInterval ?? raw.defaultHeartbeatInterval,
       linearLabel: agent.linearLabel ?? agent.name,
+      // Unset ${DISCORD_*} placeholders become an empty string during config
+      // interpolation. Treat that as absent so an otherwise-valid pilot can be
+      // validated before Discord credentials are installed.
+      discordChannelId: agent.discordChannelId || undefined,
     })),
     defaultHeartbeatInterval: raw.defaultHeartbeatInterval,
     githubRepos: raw.github?.repos,
@@ -716,6 +732,7 @@ function transformConfig(raw: RawConfig): SwarmConfig {
       } : undefined,
       workerTimeoutMs: raw.autonomous.workerTimeoutMs,
       reviewerTimeoutMs: raw.autonomous.reviewerTimeoutMs,
+      openRouterFreeOnly: raw.autonomous.openRouterFreeOnly,
       maxConcurrentTasks: raw.autonomous.maxConcurrentTasks,
       stalledInProgressHours: raw.autonomous.stalledInProgressHours,
       maxConcurrentPerProject: raw.autonomous.maxConcurrentPerProject,
@@ -917,10 +934,12 @@ export function generateSampleConfig(): string {
 # Environment variables use \${VAR_NAME} or \${VAR_NAME:-default} format
 
 # Default CLI adapter for worker/reviewer stages
-# Options: codex, openrouter, atlascloud, lmstudio, local, gpt
+# Options: codex, codex-responses, openrouter, atlascloud, upstage, opencode-go, lmstudio, local, gpt, claude
 # - codex:      OpenAI Codex via PKCE login (openswarm auth login --provider codex)
 # - openrouter: OpenRouter API key (OPENROUTER_API_KEY env var or openswarm auth login --provider openrouter)
 # - atlascloud: Atlas Cloud API key (ATLASCLOUD_API_KEY env var)
+# - upstage:    Upstage Solar API (UPSTAGE_API_KEY_PRIMARY, optional UPSTAGE_API_KEY_SECONDARY)
+# - opencode-go: OpenCode Go API (OPENCODE_GO_API_KEY env var)
 # - lmstudio:   LM Studio local server (set LMSTUDIO_BASE_URL / LMSTUDIO_MODEL)
 # - local:      Ollama local models (ollama pull <model>)
 # - gpt:        OpenAI Chat API via OAuth (openswarm auth login --provider gpt)

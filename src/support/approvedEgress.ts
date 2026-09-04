@@ -8,6 +8,9 @@
 
 const APPROVED_MODEL_ENDPOINTS = new Set([
   'https://api.atlascloud.ai/v1/chat/completions',
+  'https://api.upstage.ai/v1/chat/completions',
+  'https://opencode.ai/zen/go/v1/chat/completions',
+  'https://opencode.ai/zen/go/v1/responses',
   'https://chatgpt.com/backend-api/codex/responses',
   'https://api.openai.com/v1/chat/completions',
   'https://openrouter.ai/api/v1/chat/completions',

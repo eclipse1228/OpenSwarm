@@ -11,6 +11,8 @@
 
 import type { AdapterName } from './types.js';
 import { ATLASCLOUD_CURATED_MODELS } from './atlascloud.js';
+import { UPSTAGE_DEFAULT_MODEL } from './upstage.js';
+import { OPENCODE_GO_CURATED_MODELS } from './opencodeGo.js';
 import { readCachedCatalog } from './modelCatalog.js';
 
 /** Version-agnostic aliases the claude CLI resolves natively. */
@@ -54,6 +56,16 @@ export function mapModelForProvider(adapter: AdapterName, model: string | undefi
     // Unlike gpt-*/claude-*, Atlas ids have no shared prefix — check membership
     // against its own catalog instead.
     return isAtlasCloudModel(current) ? current : undefined;
+  }
+  if (adapter === 'upstage') {
+    return current === UPSTAGE_DEFAULT_MODEL || (readCachedCatalog('upstage')?.models.includes(current) ?? false)
+      ? current
+      : undefined;
+  }
+  if (adapter === 'opencode-go') {
+    return OPENCODE_GO_CURATED_MODELS.includes(current) || (readCachedCatalog('opencode-go')?.models.includes(current) ?? false)
+      ? current
+      : undefined;
   }
   // openrouter/gpt/local/lmstudio: a namespaced id ("vendor/model") may carry
   // over; a bare id from another provider usually won't — drop to the default.

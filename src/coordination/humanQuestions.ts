@@ -42,15 +42,15 @@ export function humanQuestionCorrelation(
 /**
  * Send a message to the operator's Discord channel.
  *
- * Returns whether it actually reached a channel: `sendToChannel` is silent when
+ * Returns whether it actually reached a channel: Discord delivery is silent when
  * Discord is not configured, and an agent must not be told its question was
  * delivered when nobody was listening.
  */
-async function notifyOperatorViaDiscord(message: string): Promise<boolean> {
+async function notifyOperatorViaDiscord(repository: string, message: string): Promise<boolean> {
   try {
     const discord = await import('../discord/discordCore.js');
     if (!discord.hasDiscordChannel()) return false;
-    await discord.sendToChannel(message);
+    await discord.sendToRepositoryChannel(repository, message);
     return true;
   } catch (error) { // cxt-ignore: error_swallow,exception_hiding — failure IS the return value; callers report "nobody was paged"
     console.warn('[Coordination] Discord notification failed:', error instanceof Error ? error.message : error);
@@ -152,7 +152,7 @@ export async function postHumanQuestion(input: HumanQuestionInput): Promise<Huma
     return { correlationId, delivered: true, openAskCount };
   }
 
-  const notify = input.notify ?? notifyOperatorViaDiscord;
+  const notify = input.notify ?? ((message: string) => notifyOperatorViaDiscord(input.repository, message));
   const delivered = isHumanSurfaceReadOnlyEnabled() ? false : await notify(
     `OpenSwarm needs a decision for ${input.taskLabel ?? input.taskId}` +
       `${input.actorName ? ` (asked by ${input.actorName})` : ''}.\n${input.question}\n\n` +

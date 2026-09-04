@@ -54,6 +54,59 @@ describe('OpenRouterCliAdapter', () => {
     expect(typeof available).toBe('boolean');
   });
 
+  it('refuses a :free model that is no longer free or cannot call tools before starting the loop', async () => {
+    const previous = process.env.OPENROUTER_API_KEY;
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ id: 'cohere/north-mini-code:free', pricing: { prompt: '0.1', completion: '0' }, supported_parameters: ['tools'] }],
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await new OpenRouterCliAdapter().run({
+        prompt: 'x', cwd: process.cwd(), model: 'cohere/north-mini-code:free',
+        webTools: false, memoryTools: false, mcpTools: [], enableTools: false, maxTurns: 1,
+      } as never);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('no longer free');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previous === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = previous;
+    }
+  });
+
+  it('enforces the pilot free-only policy before a paid-model request is sent', async () => {
+    const previousKey = process.env.OPENROUTER_API_KEY;
+    const previousPolicy = process.env.OPENSWARM_OPENROUTER_FREE_ONLY;
+    process.env.OPENROUTER_API_KEY = 'sk-or-test';
+    process.env.OPENSWARM_OPENROUTER_FREE_ONLY = '1';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await new OpenRouterCliAdapter().run({
+        prompt: 'x', cwd: process.cwd(), model: 'openai/gpt-5',
+        webTools: false, memoryTools: false, mcpTools: [], enableTools: false, maxTurns: 1,
+      } as never);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('free-model policy rejected');
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = previousKey;
+      if (previousPolicy === undefined) delete process.env.OPENSWARM_OPENROUTER_FREE_ONLY;
+      else process.env.OPENSWARM_OPENROUTER_FREE_ONLY = previousPolicy;
+    }
+  });
+
+  it('blocks a free reviewer when OpenRouter has no ZDR route and never relaxes privacy', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { message: 'No providers satisfy data_collection: deny' } }), { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const callApi = createApiCaller('sk-or-test', 'cohere/north-mini-code:free');
+
+    await expect(callApi([{ role: 'user', content: 'review' }], [])).rejects.toThrow(/no zero-data-retention route/i);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('calls /chat/completions with Bearer auth and attribution headers', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(

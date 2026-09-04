@@ -13,7 +13,12 @@ import { isHumanSurfaceReadOnlyEnabled } from '../mcp/humanSurfacePolicy.js';
 
 export interface Notifier {
   /** Send one outbound notification. Implementations must not throw. */
-  notify(message: string | EmbedBuilder): Promise<void>;
+  notify(message: string | EmbedBuilder, context?: NotificationContext): Promise<void>;
+}
+
+/** Optional project identity for Discord-only routing; other notifiers ignore it. */
+export interface NotificationContext {
+  repository?: string;
 }
 
 export type NotificationsConfig = {
@@ -25,7 +30,7 @@ export type NotificationsConfig = {
 };
 
 /** Discord's content shape (string or embeds) — the existing sendToChannel signature. */
-type DiscordSend = (content: string | { embeds: EmbedBuilder[] }) => Promise<void>;
+type DiscordSend = (content: string | { embeds: EmbedBuilder[] }, repository?: string) => Promise<void>;
 
 const NOTIFICATION_TEXT_LIMIT = 4096;
 const NOTIFICATION_POST_TIMEOUT_MS = 10_000;
@@ -90,16 +95,16 @@ class NoopNotifier implements Notifier {
 /** Discord bot channel. Owns the string→Embed wrapping (moved here from reportToDiscord). */
 class DiscordNotifier implements Notifier {
   constructor(private readonly send: DiscordSend) {}
-  async notify(message: string | EmbedBuilder): Promise<void> {
+  async notify(message: string | EmbedBuilder, context?: NotificationContext): Promise<void> {
     if (isHumanSurfaceReadOnlyEnabled()) return;
     try {
       if (typeof message === 'string') {
         // Lazy import keeps discord.js out of the load path for non-Discord users.
         const { EmbedBuilder } = await import('discord.js');
         const embed = new EmbedBuilder().setDescription(messageToText(message)).setColor(0x00ff41).setTimestamp();
-        await this.send({ embeds: [embed] });
+        await this.send({ embeds: [embed] }, context?.repository);
       } else {
-        await this.send({ embeds: [message] });
+        await this.send({ embeds: [message] }, context?.repository);
       }
     } catch (err) {
       console.error('[Notify] Discord send failed:', sanitizeNotificationError(err));

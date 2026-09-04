@@ -73,6 +73,7 @@ models/
 
 # OpenSwarm local state
 .openswarm/
+.gjc/
 
 # Trash
 trash/

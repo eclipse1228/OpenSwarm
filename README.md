@@ -17,6 +17,8 @@
 
 OpenSwarm orchestrates multiple AI agents as autonomous code workers. It picks up issues from **Linear or a built-in local tracker**, runs Worker/Reviewer pair pipelines, reports through a pluggable notifier (Discord, Slack, Telegram, webhook), and retains long-term memory via LanceDB. Workers run on **OpenAI Codex/GPT**, **any OpenRouter model**, **local open-source models** (Ollama, LM Studio), or **Claude Code** (`claude -p`, opt-in) — with cost-aware routing measured on an L0–L6 benchmark ladder.
 
+Pilot smoke test: the Worker-to-Reviewer Discord flow was verified.
+
 **Verified on real GitHub issues**: the agentic harness solves SWE-bench Lite instances graded by the official harness. Hybrid mode — a frontier model diagnoses read-only, a lightweight model implements with a verification loop — resolved **3/3 attempted instances** that every single lightweight model had failed, at a fraction of frontier-only cost. Workers also **learn each repository over time**: task outcomes are stored as per-repo knowledge and recalled into future prompts. ([benchmark rubric & results](benchmarks/RUBRIC.md))
 
 ## Sponsors
@@ -853,7 +855,7 @@ and the harness defects the benchmark uncovered.
 |---------|-------------|
 | `!pair` | Pair session status |
 | `!pair start [taskId]` | Start a pair session |
-| `!pair run <taskId> [project]` | Direct pair run |
+| `!pair run <taskId> [project] [-- <description>]` | Direct pair run; add an inline description when no tracker issue is available |
 | `!pair stop [sessionId]` | Stop a pair session |
 | `!pair history [n]` | View session history |
 | `!pair stats` | View pair statistics |

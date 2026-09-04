@@ -595,6 +595,27 @@ describe('AutonomousRunner coverage — safely-reachable helpers', () => {
       expect(() => r.switchProvider('claude')).not.toThrow();
     });
 
+    it('restores the configured free reviewer rather than OpenRouter\'s paid default', async () => {
+      const r = new AutonomousRunner(cfg({
+        defaultAdapter: 'upstage',
+        openRouterFreeOnly: true,
+        defaultRoles: {
+          worker: { enabled: true, adapter: 'opencode-go', model: 'kimi-k2.7-code' },
+          reviewer: { enabled: true, adapter: 'openrouter', model: 'cohere/north-mini-code:free' },
+        },
+      }));
+
+      r.switchProvider('claude');
+      r.switchProvider('openrouter');
+
+      expect((await r.getAdapterSummary()).reviewer).toMatchObject({
+        adapter: 'openrouter', model: 'cohere/north-mini-code:free',
+      });
+      expect((await r.getAdapterSummary()).worker).toMatchObject({
+        adapter: 'openrouter', model: 'cohere/north-mini-code:free',
+      });
+    });
+
     it('remaps jobProfiles roles, dropping incompatible models', () => {
       const r = new AutonomousRunner(cfg({
         defaultAdapter: 'codex',
@@ -706,6 +727,17 @@ describe('AutonomousRunner coverage — safely-reachable helpers', () => {
       internal.state.pendingApproval = task();
       expect(r.reject()).toBe(true);
       expect(internal.state.pendingApproval).toBeUndefined();
+    });
+
+    it('does not approve or reject a different task ID', async () => {
+      const r = new AutonomousRunner(cfg());
+      const internal = r as unknown as Internal;
+      internal.state.pendingApproval = task({ id: 'pending-id', issueId: 'ISSUE-1', issueIdentifier: 'OSW-1' });
+
+      expect(r.reject('OTHER-1')).toBe(false);
+      expect(internal.state.pendingApproval).toBeDefined();
+      expect(await r.approve('OTHER-1')).toBe(false);
+      expect(internal.state.pendingApproval).toBeDefined();
     });
 
     it('approve() returns false without calling the decision engine when nothing is pending', async () => {

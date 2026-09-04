@@ -12,6 +12,13 @@ describe('prepareApprovedModelRequest', () => {
     });
   });
 
+  it('allows the OpenCode Go Responses endpoint for Muse models', () => {
+    expect(prepareApprovedModelRequest(
+      'https://opencode.ai/zen/go/v1/responses',
+      { model: 'muse-spark-1.3-contributor' },
+    ).url).toBe('https://opencode.ai/zen/go/v1/responses');
+  });
+
   it('rejects arbitrary and non-HTTPS endpoints', () => {
     expect(() => prepareApprovedModelRequest('https://example.invalid/v1', {})).toThrow('unapproved endpoint');
     expect(() => prepareApprovedModelRequest('http://api.openai.com/v1/chat/completions', {})).toThrow('unapproved endpoint');

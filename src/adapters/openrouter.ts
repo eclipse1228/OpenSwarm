@@ -45,7 +45,14 @@ const OPENROUTER_API_BASE = 'https://openrouter.ai/api/v1';
 // short answer (measured: 20 tokens → content null, 500 tokens → "OK"). The
 // reasoning-mandatory handling added for that lives further down in this file.
 export const DEFAULT_MODEL = 'deepseek/deepseek-v4-flash';
+export const PILOT_FREE_REVIEWER_MODEL = 'cohere/north-mini-code:free';
 const PROFILE_KEY = 'openrouter:default';
+let configFreeOnly = false;
+
+/** Set from validated daemon configuration; env remains available for CLI-only runs. */
+export function setOpenRouterFreeOnlyPolicy(enabled: boolean): void {
+  configFreeOnly = enabled;
+}
 
 /** OPENROUTER_API_KEY env var (legacy: OPENROUTER_API) → immediate API key (no PKCE needed). */
 function getEnvApiKey(): string | undefined {
@@ -61,6 +68,51 @@ const MODEL_LIST_TIMEOUT_MS = 10_000;
  * replaces it whenever a key is present.
  */
 const CURATED_MODELS = [DEFAULT_MODEL, 'deepseek/deepseek-v4-pro', 'openai/gpt-5', 'anthropic/claude-sonnet-4'];
+
+function isZdrRouteUnavailable(status: number, errorText: string, model: string): boolean {
+  if (status < 400 || !model.endsWith(':free')) return false;
+  const normalized = errorText.toLowerCase();
+  return normalized.includes('data_collection')
+    || normalized.includes('zero data retention')
+    || normalized.includes('zdr')
+    || normalized.includes('no providers')
+    || normalized.includes('no provider');
+}
+
+function zdrRouteUnavailableError(model: string): Error {
+  return new Error(
+    `OpenRouter free reviewer blocked: no zero-data-retention route is available for ${model}; ` +
+    'no paid or privacy-relaxed fallback will be used. Retry after a free ZDR route becomes available.',
+  );
+}
+
+/**
+ * A `:free` model is an explicit operator policy, not merely a pricing hint.
+ * Verify it against the live catalog before repository context can be sent.
+ */
+async function assertFreeToolModel(apiKey: string, model: string): Promise<void> {
+  const freeOnly = configFreeOnly || process.env.OPENSWARM_OPENROUTER_FREE_ONLY === '1';
+  if (freeOnly && !model.endsWith(':free')) {
+    throw new Error(`OpenRouter free-model policy rejected paid model: ${model}.`);
+  }
+  if (!freeOnly && !model.endsWith(':free')) return;
+  const res = await fetch(`${OPENROUTER_API_BASE}/models`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`OpenRouter free-model catalog check failed (${res.status}).`);
+  const payload = await res.json() as {
+    data?: Array<{ id?: string; pricing?: { prompt?: string; completion?: string }; supported_parameters?: string[] }>;
+  };
+  const candidate = payload.data?.find((entry) => entry.id === model);
+  if (!candidate) throw new Error(`OpenRouter free-model catalog check failed: ${model} is unavailable.`);
+  if (Number(candidate.pricing?.prompt) !== 0 || Number(candidate.pricing?.completion) !== 0) {
+    throw new Error(`OpenRouter free-model catalog check failed: ${model} is no longer free.`);
+  }
+  if (!candidate.supported_parameters?.includes('tools')) {
+    throw new Error(`OpenRouter free-model catalog check failed: ${model} does not support tools.`);
+  }
+}
 
 function catalogSpec(): CatalogSpec {
   return {
@@ -151,6 +203,16 @@ export class OpenRouterCliAdapter implements CliAdapter {
     }
 
     const model = options.model ?? await this.getDefaultModel();
+    try {
+      await assertFreeToolModel(apiKey, model);
+    } catch (err) {
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startTime,
+      };
+    }
     const callApi = createApiCaller(apiKey, model, {
       disableReasoning: options.disableReasoning,
       onToken: options.onToken,
@@ -308,6 +370,9 @@ export function createApiCaller(apiKey: string, model: string, opts: ApiCallerOp
 
       if (!res.ok) {
         const errText = await res.text().catch(() => '');
+        if (isZdrRouteUnavailable(res.status, errText, model)) {
+          throw zdrRouteUnavailableError(model);
+        }
         // Reasoning-mandatory models (minimax-m3, thinking-only variants)
         // reject `reasoning: {enabled: false}` with a 400 — the static openai/*
         // exclusion above cannot enumerate them, and the failure killed every

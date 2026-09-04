@@ -366,7 +366,25 @@ describe('service', () => {
       );
       expect(initDiscord).toHaveBeenCalledWith(
         mockConfig.discordToken,
-        mockConfig.discordChannelId
+        mockConfig.discordChannelId,
+        {},
+        {}
+      );
+    });
+
+    it('maps each configured project repository to its Discord project channel', async () => {
+      const { initDiscord } = await import('../discord/index.js');
+      await startService({
+        ...mockConfig,
+        discordProjectChannelIds: { openswarm: 'project-channel' },
+        agents: [{ ...mockConfig.agents[0], name: 'openswarm', projectPath: '/workspace/OpenSwarm' }],
+      });
+
+      expect(initDiscord).toHaveBeenCalledWith(
+        mockConfig.discordToken,
+        mockConfig.discordChannelId,
+        { openswarm: 'project-channel' },
+        { '/workspace/OpenSwarm': 'project-channel' },
       );
     });
 
@@ -625,6 +643,64 @@ describe('service', () => {
       expect(setPairModeConfig).toHaveBeenCalled();
 
       await stopService();
+    });
+
+    it('configures Discord pairs from autonomous roles and limits without legacy pairMode', async () => {
+      const { setPairModeConfig } = await import('../discord/index.js');
+
+      const autonomousOnlyPairConfig: SwarmConfig = {
+        ...mockConfig,
+        pairMode: undefined,
+        autonomous: {
+          enabled: false,
+          pairMode: true,
+          schedule: '*/30 * * * *',
+          maxAttempts: 4,
+          workerTimeoutMs: 111_000,
+          reviewerTimeoutMs: 222_000,
+          allowedProjects: ['/tmp'],
+          models: { worker: 'legacy-worker', reviewer: 'legacy-reviewer' },
+          defaultRoles: {
+            worker: { adapter: 'opencode-go', model: 'muse-spark-1.3-contributor' },
+            reviewer: { adapter: 'openrouter', model: 'cohere/north-mini-code:free' },
+          },
+        },
+      };
+
+      await startService(autonomousOnlyPairConfig);
+
+      expect(setPairModeConfig).toHaveBeenCalledWith(expect.objectContaining({
+        maxAttempts: 4,
+        workerTimeoutMs: 111_000,
+        reviewerTimeoutMs: 222_000,
+        roles: {
+          worker: { adapter: 'opencode-go', model: 'muse-spark-1.3-contributor' },
+          reviewer: { adapter: 'openrouter', model: 'cohere/north-mini-code:free' },
+        },
+      }));
+    });
+
+    it('uses the bounded per-stage timeout when autonomous pair timeouts are zero', async () => {
+      const { setPairModeConfig } = await import('../discord/index.js');
+
+      await startService({
+        ...mockConfig,
+        pairMode: undefined,
+        autonomous: {
+          enabled: false,
+          pairMode: true,
+          schedule: '*/30 * * * *',
+          maxAttempts: 3,
+          workerTimeoutMs: 0,
+          reviewerTimeoutMs: 0,
+          allowedProjects: ['/tmp'],
+        },
+      });
+
+      expect(setPairModeConfig).toHaveBeenCalledWith(expect.objectContaining({
+        workerTimeoutMs: 1_200_000,
+        reviewerTimeoutMs: 360_000,
+      }));
     });
 
     it('should handle autonomous mode config', async () => {

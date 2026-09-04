@@ -1108,7 +1108,7 @@ describe('runnerExecution.ts coverage extension', () => {
       await executePipeline(makeCtx({ reportToDiscord }), task(), '/repo');
 
       expect(formatWorkReport).toHaveBeenCalled();
-      expect(reportToDiscord).toHaveBeenCalledWith('work report');
+      expect(reportToDiscord).toHaveBeenCalledWith('work report', { repository: '/repo' });
       expect(taskSourceMock.addComment).toHaveBeenCalledWith('issue-1', expect.any(String));
     });
 
@@ -1186,8 +1186,8 @@ describe('runnerExecution.ts coverage extension', () => {
 
       expect(formatTestReport).toHaveBeenCalled();
       expect(formatDocReport).toHaveBeenCalled();
-      expect(reportToDiscord).toHaveBeenCalledWith('test report');
-      expect(reportToDiscord).toHaveBeenCalledWith('doc report');
+      expect(reportToDiscord).toHaveBeenCalledWith('test report', { repository: '/repo' });
+      expect(reportToDiscord).toHaveBeenCalledWith('doc report', { repository: '/repo' });
     });
 
     it('reports a revision:start event to Discord', async () => {
@@ -1198,7 +1198,7 @@ describe('runnerExecution.ts coverage extension', () => {
 
       await executePipeline(makeCtx({ reportToDiscord }), task(), '/repo');
 
-      expect(reportToDiscord).toHaveBeenCalledWith(expect.stringContaining('Revision needed'));
+      expect(reportToDiscord).toHaveBeenCalledWith(expect.stringContaining('Revision needed'), { repository: '/repo' });
     });
 
     it('logs a halt to Linear and reports an embed when haltToLinear is enabled', async () => {

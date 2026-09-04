@@ -20,7 +20,7 @@ const KNOWN_REPOS: Record<string, string> = {
   'pykiwoom-rest': '~/dev/tools/pykiwoom-rest',
 
   // Projects - add as needed
-  'OpenSwarm': '~/dev/OpenSwarm',
+  openswarm: '~/dev/OpenSwarm',
   stonks: '~/dev/STONKS',
   stockapi: '~/dev/StockAPI',
 };

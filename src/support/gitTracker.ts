@@ -343,10 +343,6 @@ export async function isGitRepo(projectPath: string): Promise<boolean> {
  * Check dirty state (uncommitted changes)
  */
 export async function isDirty(projectPath: string): Promise<boolean> {
-  try {
-    const status = await runGitCommand(projectPath, ['status', '--porcelain']);
-    return status.trim().length > 0;
-  } catch {
-    return false;
-  }
+  const status = await runGitCommand(projectPath, ['status', '--porcelain']);
+  return status.trim().length > 0;
 }
