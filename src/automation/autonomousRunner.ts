@@ -2369,7 +2369,7 @@ export class AutonomousRunner {
         this.syslog(`✓ Tracker cache: ${trackerReconcile.fromFetch} bulk hit(s), ${trackerReconcile.lookedUp} explicit lookup(s), ${trackerReconcile.terminal} terminal ledger row(s) reconciled`);
       }
       if (this.stopping) return;
-      if (tasks.length === 0) {
+      if (tasks.length === 0 && !this.config.backlogGrooming?.enabled) {
         this.syslog('— No tasks in backlog');
         return;
       }
@@ -2382,8 +2382,25 @@ export class AutonomousRunner {
       this.lastFetchedTasks = tasks;
       this.syslog(`✓ Found ${tasks.length} tasks from Linear`);
 
-      tasks = await this.maybeRunBacklogGrooming(tasks);
+      // Backlog grooming is advisory, but it needs to see parked cards that the
+      // execution lane intentionally excludes. Fetch that wider read scope only
+      // for grooming; never hand those parked cards to the DecisionEngine.
+      let groomingTasks = tasks;
+      if (this.config.backlogGrooming?.enabled && this.config.includeBacklog !== true) {
+        const groomingFetch = await fetchLinearTasks({ includeBacklog: true });
+        if (groomingFetch.error) {
+          this.syslog(`⚠ Backlog grooming fetch failed: ${groomingFetch.error}`);
+        } else {
+          groomingTasks = groomingFetch.tasks;
+        }
+      }
+      groomingTasks = await this.maybeRunBacklogGrooming(groomingTasks);
       if (this.stopping) return;
+      // `includeBacklog: false` is the operator's execution boundary. A wider
+      // advisory grooming fetch must not silently widen it.
+      tasks = this.config.includeBacklog === true
+        ? groomingTasks
+        : groomingTasks.filter((task) => task.linearState !== 'Backlog');
       this.lastFetchedTasks = tasks;
       if (tasks.length === 0) {
         this.syslog('— No executable tasks after backlog grooming');

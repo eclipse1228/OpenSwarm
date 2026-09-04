@@ -19,6 +19,11 @@ import { enrichTaskFromState } from '../taskState/store.js';
 /** The runner's task-state vocabulary (mirrors Linear's updateIssueState states). */
 export type TaskState = 'In Progress' | 'In Review' | 'Done' | 'Backlog' | 'Todo';
 
+/** Narrow tracker-read options. Execution and advisory planning can have different scopes. */
+export interface TaskFetchOptions {
+  includeBacklog?: boolean;
+}
+
 /** Pair-completion stats (matches linear.logPairComplete). */
 export interface PairCompleteStats {
   attempts: number;
@@ -60,7 +65,7 @@ export type TrackerIssueResolution =
  */
 export interface ITaskSource {
   readonly kind: 'linear' | 'local';
-  fetchTasks(): Promise<TaskItem[]>;
+  fetchTasks(options?: TaskFetchOptions): Promise<TaskItem[]>;
   /** Fetch one issue even when terminal states are excluded from fetchTasks(). */
   lookupIssueState(issueIdOrIdentifier: string): Promise<TrackerIssueLookup>;
   /** Resolve an identifier on a cache miss without widening the normal bulk fetch. */
@@ -99,9 +104,9 @@ export class LinearTaskSource implements ITaskSource {
   readonly kind = 'linear' as const;
   /** fetch is injected so the existing service.ts fetcher closure (slim mode,
    *  comment hydration, task-state enrichment) is preserved verbatim. */
-  constructor(private readonly fetch: () => Promise<TaskItem[]>) {}
+  constructor(private readonly fetch: (options?: TaskFetchOptions) => Promise<TaskItem[]>) {}
 
-  fetchTasks(): Promise<TaskItem[]> { return this.fetch(); }
+  fetchTasks(options?: TaskFetchOptions): Promise<TaskItem[]> { return this.fetch(options); }
   async lookupIssueState(issueIdOrIdentifier: string): Promise<TrackerIssueLookup> {
     const result = await linear.lookupIssue(issueIdOrIdentifier);
     if (!result.ok) return result;
@@ -395,7 +400,10 @@ export class SqliteTaskSource implements ITaskSource {
  * Pick the task source: Linear when configured (preserving its fetcher closure),
  * else the local SQLite store. Called from service startup.
  */
-export function selectTaskSource(linearConfigured: boolean, linearFetch: () => Promise<TaskItem[]>): ITaskSource {
+export function selectTaskSource(
+  linearConfigured: boolean,
+  linearFetch: (options?: TaskFetchOptions) => Promise<TaskItem[]>,
+): ITaskSource {
   if (linearConfigured) return new LinearTaskSource(linearFetch);
   return new SqliteTaskSource(getIssueStore());
 }

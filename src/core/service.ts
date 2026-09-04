@@ -290,13 +290,13 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
     if (linearConfigured && linearProjectIds.length === 0) {
       console.warn('[Service] No mapped Linear projects found — autonomous Linear fetches will fail closed');
     }
-    const selectedTaskSource = selectTaskSource(linearConfigured, async () => {
+    const selectedTaskSource = selectTaskSource(linearConfigured, async (fetchOptions) => {
       await linear.ensureLinearAuthFresh(); // refresh OAuth token (no-op for API key) each heartbeat
       const issues = await linear.getMyIssues({
         slim: true,
         timeoutMs: 300000,
         projectIds: linearProjectIds,
-        includeBacklog: config.autonomous?.includeBacklog === true,
+        includeBacklog: fetchOptions?.includeBacklog ?? config.autonomous?.includeBacklog === true,
       });
       const { linearIssueToTask } = await import('../orchestration/decisionEngine.js');
       return issues.map((issue: any) => {

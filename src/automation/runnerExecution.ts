@@ -29,7 +29,7 @@ import { formatTaskDescription, parseFileScopeFromDescription } from '../linear/
 import { findDuplicateSibling, type ExistingSibling } from './duplicateSubIssueGuard.js';
 import { broadcastEvent } from '../core/eventHub.js';
 import type { Notifier, NotificationContext } from '../notify/notifier.js';
-import type { ITaskSource } from './taskSource.js';
+import type { ITaskSource, TaskFetchOptions } from './taskSource.js';
 import {createWorktree, hasRecoverableWorktree, preserveWorktree, removeWorktree, WorktreeCoordinationError,  } from '../support/worktreeManager.js';
 import type { WorktreeInfo } from '../support/worktreeManager.js';
 import type { ExecutionDurabilityHooks } from './durableRunCoordinator.js';
@@ -128,14 +128,14 @@ export function getTaskSource(): ITaskSource | null {
 // Track consecutive fetch failures for visibility
 let fetchFailureCount = 0;
 
-export async function fetchLinearTasks(): Promise<{ tasks: TaskItem[]; error?: string }> {
+export async function fetchLinearTasks(options?: TaskFetchOptions): Promise<{ tasks: TaskItem[]; error?: string }> {
   if (!taskSource) {
     console.log('[AutonomousRunner] No task source registered');
     return { tasks: [], error: 'No task source registered' };
   }
 
   try {
-    const tasks = await taskSource.fetchTasks();
+    const tasks = await taskSource.fetchTasks(options);
     if (fetchFailureCount > 0) {
       console.log(`[AutonomousRunner] Task fetch recovered after ${fetchFailureCount} failures`);
     }
