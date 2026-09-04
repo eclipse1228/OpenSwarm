@@ -28,7 +28,7 @@ import { t } from '../locale/index.js';
 import { formatTaskDescription, parseFileScopeFromDescription } from '../linear/format.js';
 import { findDuplicateSibling, type ExistingSibling } from './duplicateSubIssueGuard.js';
 import { broadcastEvent } from '../core/eventHub.js';
-import type { Notifier } from '../notify/notifier.js';
+import type { Notifier, NotificationContext } from '../notify/notifier.js';
 import type { ITaskSource } from './taskSource.js';
 import {createWorktree, hasRecoverableWorktree, preserveWorktree, removeWorktree, WorktreeCoordinationError,  } from '../support/worktreeManager.js';
 import type { WorktreeInfo } from '../support/worktreeManager.js';
@@ -100,13 +100,14 @@ export function setNotifier(n: Notifier): void {
  * Send an outbound notification. Name kept for call-site stability — it is now
  * backend-agnostic (routes to the configured Notifier, not necessarily Discord).
  */
-export async function reportToDiscord(message: string | EmbedBuilder): Promise<void> {
+export async function reportToDiscord(message: string | EmbedBuilder, context?: NotificationContext): Promise<void> {
   if (!notifier) {
     console.log('[AutonomousRunner] No notifier, logging instead:',
       typeof message === 'string' ? message : message.data.title);
     return;
   }
-  await notifier.notify(message);
+  if (context) await notifier.notify(message, context);
+  else await notifier.notify(message);
 }
 
 // Task source (Linear OR local SQLite — INT-1577). Injected at service start;
@@ -166,7 +167,7 @@ export interface ExecutionContext {
   decompositionDailyLimit?: number;
   decompositionAutoBacklog?: boolean;
   getRolesForProject: (projectPath: string) => DefaultRolesConfig | undefined;
-  reportToDiscord: (message: string | EmbedBuilder) => Promise<void>;
+  reportToDiscord: (message: string | EmbedBuilder, context?: NotificationContext) => Promise<void>;
   /** Git worktree mode: work in an isolated worktree per issue, auto-create PR */
   worktreeMode?: boolean;
   /** Job profiles for on-the-fly model selection */
@@ -1066,12 +1067,14 @@ export async function executePipeline(
       projectName: task.linearProject?.name,
       projectPath: actualPath,
     };
+    const reportTask = (message: string | EmbedBuilder): Promise<void> =>
+      ctx.reportToDiscord(message, { repository: projectPath });
 
     pipeline.on('stage:complete', ({ stage, result, context }) => {
       console.log(`[${taskPrefix}] Stage completed: ${stage}, success=${result.success}`);
       trackPipelineEffect(
         'Stage result report',
-        () => reportStageResult(stage, result, ctx.reportToDiscord, taskReportCtx),
+        () => reportStageResult(stage, result, reportTask, taskReportCtx),
       );
       // Audit trail: comment the actions taken (files changed, commands run,
       // confidence, halt reason) on each worker run.
@@ -1106,7 +1109,7 @@ export async function executePipeline(
     pipeline.on('revision:start', ({ stage }) => {
       trackPipelineEffect(
         'Revision notification',
-        () => ctx.reportToDiscord(t('runner.pipeline.revisionNeeded', { stage })),
+        () => reportTask(t('runner.pipeline.revisionNeeded', { stage })),
       );
     });
 
@@ -1136,7 +1139,7 @@ export async function executePipeline(
           { name: 'Reason', value: haltReason || 'Low confidence score', inline: false },
         )
         .setTimestamp();
-      trackPipelineEffect('HALT notification', () => ctx.reportToDiscord(haltEmbed));
+      trackPipelineEffect('HALT notification', () => reportTask(haltEmbed));
     });
 
     const stages = getEnabledStages(roles, ctx.verify);
@@ -1157,7 +1160,7 @@ export async function executePipeline(
       )
       .setTimestamp();
 
-    await ctx.reportToDiscord(startEmbed);
+    await reportTask(startEmbed);
 
     if (task.issueId) {
       try {
@@ -1297,7 +1300,7 @@ export async function requestApproval(
       { name: 'Priority', value: `P${decision.task.priority}`, inline: true },
       { name: t('runner.approval.reason'), value: decision.reason, inline: false },
     )
-    .setFooter({ text: t('runner.approval.footer') })
+    .setFooter({ text: `Operations hub approval only: !approve ${issueRef} or !reject ${issueRef}` })
     .setTimestamp();
 
   await reportFn(embed);

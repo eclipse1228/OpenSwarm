@@ -85,6 +85,7 @@ import type { AutonomousConfig, RunnerState } from './runnerTypes.js';
 export { pickPipelineFailureDetail } from './runnerState.js';
 import type { AdapterName } from '../adapters/types.js';
 import { mapModelForProvider as mapModelForAdapter } from '../adapters/modelCompat.js';
+import { PILOT_FREE_REVIEWER_MODEL } from '../adapters/openrouter.js';
 import { isTimeoutError } from '../adapters/errorClassification.js';
 import {
   applyBacklogGrooming,
@@ -577,7 +578,8 @@ export class AutonomousRunner {
       console.log(`[Scheduler] Task completed: ${taskCtx} ${task.title}`);
       broadcastEvent({ type: 'task:completed', data: { taskId: taskEventKey(task), success: result.success, duration: result.totalDuration } });
       this.recordPipelineHistory(task, result);
-      await reportToDiscord(formatPipelineResultEmbed(result));
+      const projectPath = await this.resolveProjectPath(task);
+      await reportToDiscord(formatPipelineResultEmbed(result), projectPath ? { repository: projectPath } : undefined);
 
       // Track as completed ONLY on success to prevent re-selection (persist to disk)
       if (task.issueId && result.success && !this.durableRuns.isPrimary) {
@@ -844,7 +846,8 @@ export class AutonomousRunner {
 
       console.log(`[Scheduler] Task failed: ${taskCtx} ${task.title}`);
       broadcastEvent({ type: 'task:completed', data: { taskId: taskEventKey(task), success: false, duration: result.totalDuration } });
-      await reportToDiscord(formatPipelineResultEmbed(result));
+      const projectPath = await this.resolveProjectPath(task);
+      await reportToDiscord(formatPipelineResultEmbed(result), projectPath ? { repository: projectPath } : undefined);
 
       // A deterministic, operator-owned failure (the publication-scope fence).
       // The coordinator has already parked the durable row under
@@ -2927,7 +2930,7 @@ export class AutonomousRunner {
       return;
     }
 
-    await reportToDiscord(formatPipelineResultEmbed(result));
+    await reportToDiscord(formatPipelineResultEmbed(result), { repository: projectPath });
 
     if (result.success && task.issueId && this.durableRuns.isPrimary) {
       await this.drainDurableOutbox().catch((error) =>
@@ -3018,15 +3021,22 @@ export class AutonomousRunner {
   }
 
   private async requestApproval(decision: DecisionResult): Promise<void> {
-    return execution.requestApproval(decision, reportToDiscord);
+    const projectPath = decision.task ? await this.resolveProjectPath(decision.task) : undefined;
+    return execution.requestApproval(
+      decision,
+      (message) => reportToDiscord(message, projectPath ? { repository: projectPath } : undefined),
+    );
   }
 
-  async approve(): Promise<boolean> {
+  async approve(taskId?: string): Promise<boolean> {
     if (!this.state.pendingApproval) {
       return false;
     }
 
     const task = this.state.pendingApproval;
+    if (taskId && taskId !== task.id && taskId !== task.issueId && taskId !== task.issueIdentifier) {
+      return false;
+    }
     this.state.pendingApproval = undefined;
 
     // Get workflow from Decision Engine
@@ -3039,8 +3049,13 @@ export class AutonomousRunner {
     return false;
   }
 
-  reject(): boolean {
+  reject(taskId?: string): boolean {
     if (!this.state.pendingApproval) {
+      return false;
+    }
+
+    const task = this.state.pendingApproval;
+    if (taskId && taskId !== task.id && taskId !== task.issueId && taskId !== task.issueIdentifier) {
       return false;
     }
 
@@ -3247,7 +3262,9 @@ export class AutonomousRunner {
         return {
           ...role,
           adapter,
-          model: mapModelForProvider(role.model),
+          model: adapter === 'openrouter' && this.config.openRouterFreeOnly
+            ? PILOT_FREE_REVIEWER_MODEL
+            : mapModelForProvider(role.model),
         };
       };
       this.config.defaultRoles.worker = {

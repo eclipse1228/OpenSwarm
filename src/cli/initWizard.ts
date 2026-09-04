@@ -23,7 +23,7 @@ import { banner } from '../support/banner.js';
 import { atomicWriteFileSync } from '../support/atomicFile.js';
 import { safeConsole as console } from '../support/safeLog.js';
 
-type ProviderId = 'codex-responses' | 'openrouter' | 'atlascloud' | 'gpt' | 'lmstudio' | 'local' | 'codex' | 'claude';
+type ProviderId = 'codex-responses' | 'openrouter' | 'atlascloud' | 'upstage' | 'opencode-go' | 'gpt' | 'lmstudio' | 'local' | 'codex' | 'claude';
 type TaskBackend = 'linear' | 'local';
 type NotifyChannel = 'none' | 'discord' | 'slack' | 'telegram' | 'webhook';
 
@@ -32,6 +32,8 @@ const PROVIDER_CHOICES: { name: string; value: ProviderId; description: string }
   { name: 'codex', value: 'codex', description: 'External codex CLI (delegated)' },
   { name: 'openrouter', value: 'openrouter', description: 'OpenRouter API key or OAuth (any model)' },
   { name: 'atlascloud', value: 'atlascloud', description: 'Atlas Cloud API key (OpenAI-compatible models)' },
+  { name: 'upstage', value: 'upstage', description: 'Upstage Solar API (Solar Pro 3; primary + optional fallback key)' },
+  { name: 'opencode-go', value: 'opencode-go', description: 'OpenCode Go API (Kimi K2.7 Code by default)' },
   { name: 'gpt', value: 'gpt', description: 'OpenAI ChatGPT OAuth (chat/completions)' },
   { name: 'claude', value: 'claude', description: 'Claude Code CLI (claude -p) — opt-in fallback' },
   { name: 'lmstudio', value: 'lmstudio', description: 'Local LM Studio server (no account)' },
@@ -128,6 +130,14 @@ async function bootstrapProvider(
   }
   if (provider === 'lmstudio' || provider === 'local') {
     console.log(`   No ${provider} server detected — start it (LM Studio :1234 / Ollama :11434) before running.`);
+    return { doAuthNow: false, plan: null };
+  }
+  if (provider === 'upstage') {
+    console.log('   Upstage uses UPSTAGE_API_KEY_PRIMARY and optional UPSTAGE_API_KEY_SECONDARY.');
+    return { doAuthNow: false, plan: null };
+  }
+  if (provider === 'opencode-go') {
+    console.log('   OpenCode Go uses OPENCODE_GO_API_KEY from your OpenCode Go subscription.');
     return { doAuthNow: false, plan: null };
   }
 
@@ -265,6 +275,12 @@ export async function runInitWizard(opts: InitWizardOptions = {}): Promise<void>
       choices: PROVIDER_CHOICES.map((c) => ({ name: c.name, value: c.value, description: c.description })),
     });
     ({ doAuthNow, plan } = await bootstrapProvider(provider));
+    if (provider === 'upstage') {
+      envVars.UPSTAGE_API_KEY_PRIMARY = (await password({ message: '   UPSTAGE_API_KEY_PRIMARY (hidden):' })).trim();
+      envVars.UPSTAGE_API_KEY_SECONDARY = (await password({ message: '   UPSTAGE_API_KEY_SECONDARY (optional, hidden):' })).trim();
+    } else if (provider === 'opencode-go') {
+      envVars.OPENCODE_GO_API_KEY = (await password({ message: '   OPENCODE_GO_API_KEY (hidden):' })).trim();
+    }
 
     // 2) Task backend
     taskBackend = await select({

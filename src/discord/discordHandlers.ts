@@ -962,10 +962,10 @@ export async function handleAuto(msg: Message, args: string[]): Promise<void> {
 /**
  * !approve - Approve pending task
  */
-export async function handleApprove(msg: Message): Promise<void> {
+export async function handleApprove(msg: Message, taskId?: string): Promise<void> {
   try {
     const runner = autonomous.getRunner();
-    const approved = await runner.approve();
+    const approved = await runner.approve(taskId);
 
     if (approved) {
       await msg.reply(`✅ ${t('discord.auto.approved')}`);
@@ -980,10 +980,10 @@ export async function handleApprove(msg: Message): Promise<void> {
 /**
  * !reject - Reject pending task
  */
-export async function handleReject(msg: Message): Promise<void> {
+export async function handleReject(msg: Message, taskId?: string): Promise<void> {
   try {
     const runner = autonomous.getRunner();
-    const rejected = runner.reject();
+    const rejected = runner.reject(taskId);
 
     if (rejected) {
       await msg.reply(`❌ ${t('discord.auto.rejected')}`);

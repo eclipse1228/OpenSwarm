@@ -22,6 +22,8 @@ export { LocalModelAdapter } from './local.js';
 export { LmStudioAdapter } from './lmstudio.js';
 export { OpenRouterCliAdapter } from './openrouter.js';
 export { AtlasCloudCliAdapter } from './atlascloud.js';
+export { UpstageCliAdapter, UPSTAGE_DEFAULT_MODEL } from './upstage.js';
+export { OpenCodeGoCliAdapter, OPENCODE_GO_DEFAULT_MODEL, OPENCODE_GO_CURATED_MODELS } from './opencodeGo.js';
 export { ClaudeCliAdapter } from './claude.js';
 export { CcRouterAdapter } from './ccRouter.js';
 export { CursorCliAdapter } from './cursor.js';
@@ -41,6 +43,8 @@ import { LocalModelAdapter } from './local.js';
 import { LmStudioAdapter } from './lmstudio.js';
 import { OpenRouterCliAdapter } from './openrouter.js';
 import { AtlasCloudCliAdapter } from './atlascloud.js';
+import { UpstageCliAdapter } from './upstage.js';
+import { OpenCodeGoCliAdapter } from './opencodeGo.js';
 import { ClaudeCliAdapter } from './claude.js';
 import { CcRouterAdapter } from './ccRouter.js';
 import { CursorCliAdapter } from './cursor.js';
@@ -55,6 +59,8 @@ const adapters: Record<string, CliAdapter> = {
   lmstudio: new LmStudioAdapter(),
   openrouter: new OpenRouterCliAdapter(),
   atlascloud: new AtlasCloudCliAdapter(),
+  upstage: new UpstageCliAdapter(),
+  'opencode-go': new OpenCodeGoCliAdapter(),
   // claude -p CLI delegate — opt-in fallback (Anthropic hasn't blocked it). Offered
   // by `openswarm init` and the dashboard provider switch, so it must be registered.
   claude: new ClaudeCliAdapter(),

@@ -11,7 +11,7 @@ import type { CoordinationToolContext } from '../coordination/coordinationTools.
 // Re-export for convenience
 export type { WorkerResult, ReviewResult };
 
-export type AdapterName = 'codex' | 'codex-responses' | 'gpt' | 'local' | 'lmstudio' | 'openrouter' | 'atlascloud' | 'claude' | 'cc-router' | 'cursor';
+export type AdapterName = 'codex' | 'codex-responses' | 'gpt' | 'local' | 'lmstudio' | 'openrouter' | 'atlascloud' | 'upstage' | 'opencode-go' | 'claude' | 'cc-router' | 'cursor';
 
 /**
  * Raw result from a CLI process execution

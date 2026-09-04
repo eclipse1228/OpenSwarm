@@ -16,6 +16,8 @@ export type AgentSession = {
   heartbeatInterval: number;
   /** Linear project/team label */
   linearLabel?: string;
+  /** Discord channel for this project's detailed task conversation. */
+  discordChannelId?: string;
   /** Whether enabled */
   enabled: boolean;
   /** Whether paused */
@@ -126,7 +128,7 @@ export type McpConfig = {
  */
 export type SwarmConfig = {
   /** Default CLI adapter */
-  adapter?: 'codex' | 'codex-responses' | 'gpt' | 'local' | 'lmstudio' | 'openrouter' | 'atlascloud' | 'claude' | 'cc-router' | 'cursor';
+  adapter?: 'codex' | 'codex-responses' | 'gpt' | 'local' | 'lmstudio' | 'openrouter' | 'atlascloud' | 'upstage' | 'opencode-go' | 'claude' | 'cc-router' | 'cursor';
   /** UI language: 'en' | 'ko' (default: 'en') */
   language: 'en' | 'ko';
   /** Discord bot token */
@@ -135,6 +137,8 @@ export type SwarmConfig = {
   discordChannelId: string;
   /** Discord Webhook URL (optional) */
   discordWebhookUrl?: string;
+  /** Agent name → project channel ID; the default channel is the operations hub. */
+  discordProjectChannelIds?: Record<string, string>;
   /** Outbound notification channel (Discord/Slack/Telegram/webhook) — INT-1576 */
   notifications?: NotificationsConfig;
   /**
@@ -307,7 +311,7 @@ export type ModelConfig = {
 /**
  * Per-role configuration
  */
-export type AgentAdapterName = 'codex' | 'codex-responses' | 'gpt' | 'local' | 'lmstudio' | 'openrouter' | 'atlascloud' | 'claude' | 'cc-router' | 'cursor';
+export type AgentAdapterName = 'codex' | 'codex-responses' | 'gpt' | 'local' | 'lmstudio' | 'openrouter' | 'atlascloud' | 'upstage' | 'opencode-go' | 'claude' | 'cc-router' | 'cursor';
 
 export type WorkerFanoutCandidateConfig = {
   /** Stable display/id for logs and scoring. */
@@ -577,6 +581,8 @@ export type AutonomousStartupConfig = {
   workerTimeoutMs?: number;
   /** Reviewer timeout (ms), 0 = unlimited (legacy) */
   reviewerTimeoutMs?: number;
+  /** Enforce OpenRouter free models for the pilot reviewer. */
+  openRouterFreeOnly?: boolean;
   /** Max concurrent tasks */
   maxConcurrentTasks?: number;
   /** Move unowned In Progress issues back to Backlog after this many idle hours. */
@@ -628,7 +634,7 @@ export type AutonomousStartupConfig = {
   jobProfiles?: JobProfile[];
   coordinationBoardIssueId?: string;
   mcpPolicies?: Record<string, { servers: string[]; allowTools?: string[]; writeTools?: string[]; destructiveTools?: string[] }>;
-  adapterRouting?: { primary?: import('../adapters/types.js').AdapterName; fallbacks?: Array<'cc-router' | 'cursor' | 'codex' | 'codex-responses'>; allowReasons?: Array<'quota' | 'infra' | 'capability'> };
+  adapterRouting?: { primary?: import('../adapters/types.js').AdapterName; fallbacks?: import('../adapters/types.js').AdapterName[]; allowReasons?: Array<'quota' | 'infra' | 'capability'> };
   periodicReviews?: Array<{ profile: 'permissions' | 'hygiene' | 'security' | 'review'; schedule: string; adapter?: 'codex' | 'cc-router' | 'cursor' }>;
   /** Explicit high-capability project supervisor. */
   orchestrator?: OrchestratorConfig;

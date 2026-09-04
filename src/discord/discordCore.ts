@@ -16,20 +16,26 @@ import {
 import fs from 'node:fs/promises';
 import { correlationIdFromHint } from '../coordination/answerHint.js';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { SwarmEvent, AgentStatus } from '../core/types.js';
 import { getAdapter, spawnCli } from '../adapters/index.js';
 import * as memory from '../memory/index.js';
+import * as dev from '../support/dev.js';
 import { t, getPrompts, getDateLocale } from '../locale/index.js';
 import { atomicWriteFileSync } from '../support/atomicFile.js';
 import { safeConsole as console } from '../support/safeLog.js';
 import { isHumanSurfaceReadOnlyEnabled } from '../mcp/humanSurfacePolicy.js';
+import type { AdapterName } from '../adapters/types.js';
 
 // Handler module (for routing)
 import { handlePair } from './discordPair.js';
 
 export let client: Client | null = null;
 export let reportChannelId: string = '';
+const projectChannelIds = new Map<string, string>();
+/** Canonical project repository path → its operator channel. */
+const repositoryChannelIds = new Map<string, string>();
+let acceptedChannelIds = new Set<string>();
 
 // Allowed user IDs (loaded from environment variables)
 const ALLOWED_USER_IDS = process.env.DISCORD_ALLOWED_USERS?.split(',').map(id => id.trim()) || [];
@@ -266,6 +272,10 @@ export let pairModeConfig: {
   maxAttempts?: number;
   workerTimeoutMs?: number;
   reviewerTimeoutMs?: number;
+  roles?: {
+    worker?: { adapter?: AdapterName; model?: string };
+    reviewer?: { adapter?: AdapterName; model?: string };
+  };
 } | null = null;
 
 /**
@@ -276,6 +286,10 @@ export function setPairModeConfig(config: {
   maxAttempts?: number;
   workerTimeoutMs?: number;
   reviewerTimeoutMs?: number;
+  roles?: {
+    worker?: { adapter?: AdapterName; model?: string };
+    reviewer?: { adapter?: AdapterName; model?: string };
+  };
 } | undefined): void {
   pairModeConfig = config ?? null;
 }
@@ -298,13 +312,27 @@ export function setCallbacks(callbacks: {
 /**
  * Initialize and start Discord bot
  */
-export async function initDiscord(token: string, channelId: string): Promise<void> {
+export async function initDiscord(
+  token: string,
+  channelId: string,
+  projects: Record<string, string> = {},
+  repositories: Record<string, string> = {},
+): Promise<void> {
   if (isHumanSurfaceReadOnlyEnabled()) {
     await stopDiscord();
     reportChannelId = '';
     return;
   }
   reportChannelId = channelId;
+  projectChannelIds.clear();
+  for (const [project, projectChannelId] of Object.entries(projects)) {
+    if (projectChannelId) projectChannelIds.set(project, projectChannelId);
+  }
+  repositoryChannelIds.clear();
+  for (const [repository, projectChannelId] of Object.entries(repositories)) {
+    if (repository && projectChannelId) repositoryChannelIds.set(resolve(repository), projectChannelId);
+  }
+  acceptedChannelIds = new Set([channelId, ...projectChannelIds.values()]);
 
   // Reconfiguration/restart must not leave the old websocket client alive.
   if (client) {
@@ -393,6 +421,13 @@ async function tryAnswerByReply(msg: Message): Promise<boolean> {
   const correlationId = questionCorrelationIdFrom(referenced, client?.user?.id);
   if (!correlationId) return false;
 
+  const { getCoordinationStore } = await import('../coordination/coordinationStore.js');
+  const question = getCoordinationStore().findQuestion(correlationId);
+  if (!question || !isRepositoryAllowedInChannel(msg, question.repository)) {
+    await msg.reply('⛔ This pending question belongs to a different project channel.');
+    return true;
+  }
+
   const answer = msg.content.trim();
   if (!answer) return false;
   const { answerHumanQuestion } = await import('../coordination/humanQuestions.js');
@@ -409,6 +444,7 @@ async function tryAnswerByReply(msg: Message): Promise<boolean> {
 async function handleMessage(msg: Message): Promise<void> {
   if (isHumanSurfaceReadOnlyEnabled()) return;
   if (msg.author.bot) return;
+  if (!isConfiguredChannel(msg)) return;
 
   // A reply to a question we posted answers that question.
   //
@@ -455,6 +491,12 @@ async function handleMessage(msg: Message): Promise<void> {
           await msg.reply('Usage: !answer <correlation-id> <answer>');
           break;
         }
+        const { getCoordinationStore } = await import('../coordination/coordinationStore.js');
+        const question = getCoordinationStore().findQuestion(correlationId);
+        if (!question || !isRepositoryAllowedInChannel(msg, question.repository)) {
+          await msg.reply('⛔ This pending question belongs to a different project channel.');
+          break;
+        }
         const { answerHumanQuestion } = await import('../coordination/humanQuestions.js');
         const result = await answerHumanQuestion(correlationId, answer, `discord:${msg.author.id}`);
         await msg.reply(result.accepted ? `Answer accepted for ${correlationId}.` : `Answer not accepted: ${result.reason}`);
@@ -473,10 +515,12 @@ async function handleMessage(msg: Message): Promise<void> {
         break;
 
       case 'pause':
+        if (!isHubChannel(msg)) { await msg.reply('⛔ Global runner controls are available only in the operations hub.'); break; }
         await handlePause(msg, args[0]);
         break;
 
       case 'resume':
+        if (!isHubChannel(msg)) { await msg.reply('⛔ Global runner controls are available only in the operations hub.'); break; }
         await handleResume(msg, args[0]);
         break;
 
@@ -514,6 +558,7 @@ async function handleMessage(msg: Message): Promise<void> {
         break;
 
       case 'cancel':
+        if (!isHubChannel(msg)) { await msg.reply('⛔ Global runner controls are available only in the operations hub.'); break; }
         await handleCancel(msg, args[0]);
         break;
 
@@ -531,18 +576,34 @@ async function handleMessage(msg: Message): Promise<void> {
         break;
 
       case 'auto':
+        if (!isHubChannel(msg)) { await msg.reply('⛔ Global runner controls are available only in the operations hub.'); break; }
         await handleAuto(msg, args);
         break;
 
       case 'approve':
-        await handleApprove(msg);
+        if (!isHubChannel(msg)) { await msg.reply('⛔ Global approvals are available only in the operations hub.'); break; }
+        await handleApprove(msg, args[0]);
         break;
 
       case 'reject':
-        await handleReject(msg);
+        if (!isHubChannel(msg)) { await msg.reply('⛔ Global approvals are available only in the operations hub.'); break; }
+        await handleReject(msg, args[0]);
         break;
 
       case 'pair':
+        // A direct pair run can receive an arbitrary path. Reject it before
+        // handing off to the pair handler so a project channel cannot dispatch
+        // work into another project's repository.
+        if (args[0] === 'run') {
+          const requestedProject = args[2] && args[2] !== '--'
+            ? args[2]
+            : repositoryForMessageChannel(msg) ?? '~/dev';
+          const projectPath = dev.resolveRepoPath(requestedProject) || requestedProject;
+          if (!isRepositoryAllowedInChannel(msg, projectPath)) {
+            await msg.reply('⛔ This direct pair run belongs to a different project channel.');
+            break;
+          }
+        }
         await handlePair(msg, args);
         break;
 
@@ -559,6 +620,48 @@ async function handleMessage(msg: Message): Promise<void> {
   }
 }
 
+function isConfiguredChannel(msg: Message): boolean {
+  if (acceptedChannelIds.size === 0) return false;
+  if (acceptedChannelIds.has(msg.channel.id)) return true;
+  return 'parentId' in msg.channel
+    && typeof msg.channel.parentId === 'string'
+    && acceptedChannelIds.has(msg.channel.parentId);
+}
+
+function channelIdForMessage(msg: Message): string | undefined {
+  if (acceptedChannelIds.has(msg.channel.id)) return msg.channel.id;
+  return 'parentId' in msg.channel && typeof msg.channel.parentId === 'string'
+    ? msg.channel.parentId
+    : undefined;
+}
+
+function isHubChannel(msg: Message): boolean {
+  return channelIdForMessage(msg) === reportChannelId;
+}
+
+export function isRepositoryAllowedInChannel(msg: Message, repository: string): boolean {
+  if (isHubChannel(msg)) return true;
+  const channelId = channelIdForMessage(msg);
+  if (!channelId) return false;
+  const normalizedRepository = resolve(repository);
+  for (const [configuredRepository, configuredChannelId] of repositoryChannelIds) {
+    if (configuredChannelId === channelId && normalizedRepository === configuredRepository) return true;
+  }
+  return false;
+}
+
+/** Resolve the sole repository owned by a project channel. The operations hub
+ * intentionally has no implicit repository because it may oversee many. */
+export function repositoryForMessageChannel(msg: Message): string | undefined {
+  if (isHubChannel(msg)) return undefined;
+  const channelId = channelIdForMessage(msg);
+  if (!channelId) return undefined;
+  const repositories = Array.from(repositoryChannelIds)
+    .filter(([, configuredChannelId]) => configuredChannelId === channelId)
+    .map(([repository]) => repository);
+  return repositories.length === 1 ? repositories[0] : undefined;
+}
+
 /**
  * !help - Show help
  */
@@ -572,16 +675,6 @@ async function handleHelp(msg: Message): Promise<void> {
 export async function reportEvent(event: SwarmEvent): Promise<void> {
   if (isHumanSurfaceReadOnlyEnabled()) return;
   if (!client) return;
-
-  let channel: TextChannel | null = null;
-  try {
-    const fetched = await client.channels.fetch(reportChannelId);
-    if (!fetched || !(fetched instanceof TextChannel)) return;
-    channel = fetched;
-  } catch (err) {
-    console.error('[Discord] Report event channel fetch failed:', err);
-    return;
-  }
 
   const emoji = {
     issue_started: '🚀',
@@ -616,10 +709,14 @@ export async function reportEvent(event: SwarmEvent): Promise<void> {
     embed.setURL(event.url);
   }
 
-  try {
-    await channel.send({ embeds: [embed] });
-  } catch (err) {
-    console.error('[Discord] Report event send failed:', err);
+  const targets = new Set([reportChannelId, projectChannelIds.get(event.session)].filter((id): id is string => Boolean(id)));
+  for (const targetId of targets) {
+    try {
+      const fetched = await client.channels.fetch(targetId);
+      if (fetched instanceof TextChannel) await fetched.send({ embeds: [embed] });
+    } catch (err) {
+      console.error('[Discord] Report event send failed:', err);
+    }
   }
 }
 
@@ -686,12 +783,12 @@ export function hasDiscordChannel(): boolean {
 /**
  * Send message to default Discord channel (for external callers)
  */
-export async function sendToChannel(content: string | { embeds: EmbedBuilder[] }): Promise<void> {
+export async function sendToChannel(content: string | { embeds: EmbedBuilder[] }, channelId = reportChannelId): Promise<void> {
   if (isHumanSurfaceReadOnlyEnabled()) return;
-  if (!client || !reportChannelId) return;
+  if (!client || !channelId) return;
 
   try {
-    const channel = await client.channels.fetch(reportChannelId) as TextChannel;
+    const channel = await client.channels.fetch(channelId) as TextChannel;
     if (!channel) return;
 
     if (typeof content === 'string' && content.length > DISCORD_MESSAGE_CHUNK) {
@@ -704,6 +801,15 @@ export async function sendToChannel(content: string | { embeds: EmbedBuilder[] }
   } catch (err) {
     console.error('[Discord] Send to channel failed:', err);
   }
+}
+
+/** Send a project-scoped operator notification, falling back to the operations hub. */
+export async function sendToRepositoryChannel(
+  repository: string,
+  content: string | { embeds: EmbedBuilder[] },
+): Promise<void> {
+  const channelId = repositoryChannelIds.get(resolve(repository)) ?? reportChannelId;
+  await sendToChannel(content, channelId);
 }
 
 /**

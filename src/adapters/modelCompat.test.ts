@@ -41,6 +41,14 @@ describe('mapModelForProvider', () => {
     expect(mapModelForProvider('claude', '  ')).toBeUndefined();
   });
 
+  it('keeps the curated OpenCode Go models before a live catalog has been cached', () => {
+    expect(mapModelForProvider('opencode-go', 'kimi-k2.7-code')).toBe('kimi-k2.7-code');
+    expect(mapModelForProvider('opencode-go', 'muse-spark-1.3-contributor')).toBe('muse-spark-1.3-contributor');
+    expect(mapModelForProvider('opencode-go', 'glm-5.3-flash')).toBe('glm-5.3-flash');
+    expect(mapModelForProvider('opencode-go', 'deepseek-v4-flash')).toBe('deepseek-v4-flash');
+    expect(mapModelForProvider('opencode-go', 'gpt-5.5')).toBeUndefined();
+  });
+
   // Regression: atlascloud and openrouter both name models "vendor/model", but
   // the vendor slugs are different catalogs (OpenRouter's z-ai/glm-5.2 vs
   // Atlas's own zai-org/GLM-4.6). Before this fix, atlascloud fell into the

@@ -40,6 +40,7 @@ import {
   hasDiscordChannel,
   initDiscord,
   sendToChannel,
+  sendToRepositoryChannel,
   sendToThread,
   stopDiscord,
 } from './discordCore.js';
@@ -89,5 +90,19 @@ describe('Discord client lifecycle', () => {
     expect(first.destroy).toHaveBeenCalledOnce();
     expect(discord.instances).toHaveLength(1);
     expect(client).toBeNull();
+  });
+
+  it('routes project operator notices by repository and falls back to the operations hub', async () => {
+    await initDiscord('token', 'hub', { openswarm: 'project' }, { '/workspace/OpenSwarm': 'project' });
+    const instance = discord.instances[0];
+    const sent: Array<[string, string]> = [];
+    instance.channels.fetch.mockImplementation(async (id: string) => ({
+      send: async (content: string) => { sent.push([id, content]); },
+    }));
+
+    await sendToRepositoryChannel('/workspace/OpenSwarm', 'project question');
+    await sendToRepositoryChannel('/workspace/other', 'hub notice');
+
+    expect(sent).toEqual([['project', 'project question'], ['hub', 'hub notice']]);
   });
 });

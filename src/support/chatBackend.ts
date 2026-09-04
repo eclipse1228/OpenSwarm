@@ -13,6 +13,8 @@ import { DEFAULT_MODEL as LOCAL_DEFAULT_MODEL } from '../adapters/local.js';
 import { DEFAULT_MODEL as OPENROUTER_DEFAULT_MODEL } from '../adapters/openrouter.js';
 import { extractCursorFinalText } from '../adapters/cursor.js';
 import { ATLASCLOUD_DEFAULT_MODEL } from '../adapters/atlascloud.js';
+import { UPSTAGE_DEFAULT_MODEL } from '../adapters/upstage.js';
+import { OPENCODE_GO_DEFAULT_MODEL } from '../adapters/opencodeGo.js';
 import { CLAUDE_DEFAULT_MODEL } from '../adapters/claude.js';
 import {
   prepareCliProcessTreeSpawn,
@@ -104,6 +106,17 @@ export const CHAT_MODEL_ALIASES: Record<AdapterName, Record<string, string>> = {
     qwen: 'qwen/qwen3.5-flash',
     'qwen-flash': 'qwen/qwen3.5-flash',
   },
+  upstage: {
+    solar: 'solar-pro3',
+    'solar-pro3': 'solar-pro3',
+  },
+  'opencode-go': {
+    kimi: 'kimi-k2.7-code',
+    'kimi-code': 'kimi-k2.7-code',
+    muse: 'muse-spark-1.3-contributor',
+    'muse-spark': 'muse-spark-1.3-contributor',
+    glm: 'glm-5.3-flash',
+  },
   claude: {
     // `claude -p --model <alias>` takes version-robust aliases directly.
     sonnet: 'sonnet',
@@ -152,6 +165,8 @@ export function getDefaultChatModel(provider: AdapterName): string {
   if (provider === 'lmstudio') return process.env.LMSTUDIO_MODEL ?? 'local-model';
   if (provider === 'openrouter') return OPENROUTER_DEFAULT_MODEL;
   if (provider === 'atlascloud') return ATLASCLOUD_DEFAULT_MODEL;
+  if (provider === 'upstage') return UPSTAGE_DEFAULT_MODEL;
+  if (provider === 'opencode-go') return OPENCODE_GO_DEFAULT_MODEL;
   if (provider === 'claude') return CLAUDE_DEFAULT_MODEL;
   if (provider === 'cc-router') return process.env.CC_ROUTER_MODEL ?? 'gpt-5.6-terra';
   if (provider === 'cursor') return 'auto';

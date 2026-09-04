@@ -54,6 +54,13 @@ describe('createNotifier — channel selection', () => {
     expect(send.mock.calls[0][0]).toEqual({ embeds: [embed] });
   });
 
+  it('passes repository context to the Discord sender for project routing', async () => {
+    const send = vi.fn(async () => {});
+    const n = createNotifier({ channel: 'discord' }, send);
+    await n.notify('review feedback', { repository: '/workspace/OpenSwarm' });
+    expect(send).toHaveBeenCalledWith(expect.anything(), '/workspace/OpenSwarm');
+  });
+
   it('Slack posts {text} to the webhook', async () => {
     const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

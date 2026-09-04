@@ -1,0 +1,33 @@
+# OpenSwarm multi-provider pilot — copy to config.yaml after filling .env.
+adapter: upstage
+
+discord:
+  token: ${DISCORD_TOKEN}
+  channelId: ${DISCORD_CHANNEL_ID}
+  projectChannelIds:
+    openswarm: ${DISCORD_OPENSWARM_CHANNEL_ID}
+
+agents:
+  - name: openswarm
+    projectPath: /Users/qts/OpenSwarm
+    discordChannelId: ${DISCORD_OPENSWARM_CHANNEL_ID}
+    enabled: true
+    paused: false
+
+autonomous:
+  enabled: false
+  pairMode: true
+  openRouterFreeOnly: true
+  allowedProjects: [/Users/qts/OpenSwarm]
+  orchestrator:
+    enabled: true
+    adapter: upstage
+    model: solar-pro3
+    reasoningEffort: high
+  defaultRoles:
+    worker:
+      adapter: opencode-go
+      model: kimi-k2.7-code
+    reviewer:
+      adapter: openrouter
+      model: cohere/north-mini-code:free

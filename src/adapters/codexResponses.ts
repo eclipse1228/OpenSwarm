@@ -70,7 +70,7 @@ export function selectDefaultCodexResponseModel(modelIds: string[]): string {
 }
 
 /** The agenticLoop callApi return shape (structurally equals its ChatCompletionResponse). */
-interface ChatLikeResponse {
+export interface ChatLikeResponse {
   choices: Array<{
     message: { role: string; content: string | null; tool_calls?: ApiToolCallShape[] };
     finish_reason: string;
@@ -133,6 +133,9 @@ interface SseEvent {
   arguments?: string;
   response?: {
     model?: string;
+    status?: string;
+    incomplete_details?: { reason?: string };
+    error?: { message?: string };
     usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } };
   };
 }
@@ -230,7 +233,7 @@ function parseSseLine(line: string): SseEvent | null {
  * `onToken` is provided, each `response.output_text.delta` is emitted live so
  * the chat TUI can stream tokens as they arrive.
  */
-async function consumeResponsesStream(
+export async function consumeResponsesStream(
   res: Response,
   onToken?: (delta: string) => void,
   onReasoning?: (line: string) => void,
@@ -241,6 +244,7 @@ async function consumeResponsesStream(
 
   const decoder = new TextDecoder();
   let buffer = '';
+  let terminalError: string | undefined;
   // Reasoning summary streams token-by-token; buffer and emit whole lines so the
   // live log shows readable thoughts instead of one-word-per-line spam.
   let reasoningBuf = '';
@@ -257,6 +261,11 @@ async function consumeResponsesStream(
   const handle = (ev: SseEvent | null) => {
     if (!ev) return;
     events.push(ev);
+    if (ev.type === 'response.incomplete') {
+      terminalError = `Responses stream incomplete${ev.response?.incomplete_details?.reason ? `: ${ev.response.incomplete_details.reason}` : ''}`;
+    } else if (ev.type === 'response.failed') {
+      terminalError = `Responses stream failed${ev.response?.error?.message ? `: ${ev.response.error.message}` : ''}`;
+    }
     if (onToken && ev.type === 'response.output_text.delta' && ev.delta) onToken(ev.delta);
     if (onReasoning && ev.type === 'response.reasoning_summary_text.delta' && ev.delta) {
       reasoningBuf += ev.delta;
@@ -277,6 +286,8 @@ async function consumeResponsesStream(
   }
   handle(parseSseLine(buffer));
   flushReasoning(true);
+
+  if (terminalError) throw new Error(terminalError);
 
   return reduceResponsesEvents(events);
 }

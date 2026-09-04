@@ -24,6 +24,7 @@ import { initRateLimiters, destroyRateLimiters } from '../support/rateLimiter.js
 import { compactMemoryTable, shouldCompact, cleanupBackupFiles } from '../memory/compaction.js';
 import { Cron } from 'croner';
 import { setDefaultAdapter } from '../adapters/index.js';
+import { stageTimeoutMs } from '../agents/stageTimeouts.js';
 import { readProviderOverride, formatProviderOverrideMismatchWarning } from './providerOverride.js';
 import { enrichTaskFromState, hydrateTaskStateFromComments, updateTaskLinearState } from '../taskState/store.js';
 import { probeDaemonPort } from '../cli/daemon.js';
@@ -111,6 +112,8 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
   initLocale(config.language);
 
   // Default CLI adapter
+  const { setOpenRouterFreeOnlyPolicy } = await import('../adapters/openrouter.js');
+  setOpenRouterFreeOnlyPolicy(config.autonomous?.openRouterFreeOnly === true);
   setDefaultAdapter(config.adapter ?? 'codex');
   console.log(`🛠️ CLI adapter: ${config.adapter ?? 'codex'}`);
 
@@ -151,7 +154,15 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
     console.log('⏭ Discord disabled by humanSurfaceReadOnly policy');
   } else if (config.discordToken && config.discordChannelId) {
     console.log('🤖 Connecting Discord bot...');
-    await discord.initDiscord(config.discordToken, config.discordChannelId);
+    const projectChannels = {
+      ...config.discordProjectChannelIds,
+      ...Object.fromEntries(config.agents.flatMap((agent) => agent.discordChannelId ? [[agent.name, agent.discordChannelId]] : [])),
+    };
+    const repositoryChannels = Object.fromEntries(config.agents.flatMap((agent) => {
+      const channelId = agent.discordChannelId ?? projectChannels[agent.name];
+      return channelId ? [[agent.projectPath, channelId]] : [];
+    }));
+    await discord.initDiscord(config.discordToken, config.discordChannelId, projectChannels, repositoryChannels);
     console.log('✅ Discord bot connected successfully');
   } else {
     console.log('⏭ Discord not configured — skipping');
@@ -183,16 +194,27 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
     getRepos: () => githubRepos,
   });
 
-  // Pair mode configuration
-  if (config.pairMode) {
-    discord.setPairModeConfig({
-      webhookUrl: config.pairMode.webhookUrl,
-      maxAttempts: config.pairMode.maxAttempts,
-      workerTimeoutMs: config.pairMode.workerTimeoutMs,
-      reviewerTimeoutMs: config.pairMode.reviewerTimeoutMs,
-    });
-    console.log(`Pair mode configured (maxAttempts: ${config.pairMode.maxAttempts})`);
-  }
+  // Discord's direct pair command is a separate execution path from the
+  // autonomous runner. Give it the same role routing so it cannot silently
+  // fall back to the daemon-wide default adapter/model.
+  const pairMaxAttempts = config.pairMode?.maxAttempts ?? config.autonomous?.maxAttempts;
+  discord.setPairModeConfig({
+    webhookUrl: config.pairMode?.webhookUrl,
+    maxAttempts: pairMaxAttempts,
+    workerTimeoutMs: config.pairMode?.workerTimeoutMs
+      ?? stageTimeoutMs('worker', config.autonomous?.workerTimeoutMs),
+    reviewerTimeoutMs: config.pairMode?.reviewerTimeoutMs
+      ?? stageTimeoutMs('reviewer', config.autonomous?.reviewerTimeoutMs),
+    roles: {
+      worker: config.autonomous?.defaultRoles?.worker
+        ? { adapter: config.autonomous.defaultRoles.worker.adapter, model: config.autonomous.defaultRoles.worker.model }
+        : undefined,
+      reviewer: config.autonomous?.defaultRoles?.reviewer
+        ? { adapter: config.autonomous.defaultRoles.reviewer.adapter, model: config.autonomous.defaultRoles.reviewer.model }
+        : undefined,
+    },
+  });
+  if (pairMaxAttempts) console.log(`Pair mode configured (maxAttempts: ${pairMaxAttempts})`);
 
   // Initialize agent states
   for (const agent of config.agents) {
@@ -267,8 +289,9 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
 
     // Register the notifier for the configured channel (Discord/Slack/Telegram/
     // webhook). Discord's sender is injected so the notifier stays decoupled.
-    const notifier = createNotifier(config.notifications, async (content: any) => {
-      await discord.sendToChannel(content);
+    const notifier = createNotifier(config.notifications, async (content: any, repository?: string) => {
+      if (repository) await discord.sendToRepositoryChannel(repository, content);
+      else await discord.sendToChannel(content);
     });
     autonomous.setNotifier(notifier);
     console.log(`[Service] Notifier registered (${config.notifications?.channel ?? 'discord'})`);
@@ -287,6 +310,7 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
       reviewerModel: config.autonomous.models?.reviewer,
       workerTimeoutMs: config.autonomous.workerTimeoutMs || 0, // 0 = unlimited
       reviewerTimeoutMs: config.autonomous.reviewerTimeoutMs || 0, // 0 = unlimited
+      openRouterFreeOnly: config.autonomous.openRouterFreeOnly,
       autonomousHeartbeat: heartbeatEnabled,
       triggerNow: heartbeatEnabled,  // Execute immediately on start (heartbeat mode only)
       maxConcurrentTasks: config.autonomous.maxConcurrentTasks,
