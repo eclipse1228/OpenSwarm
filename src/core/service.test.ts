@@ -33,6 +33,7 @@ vi.mock('../linear/index.js', () => ({
   initLinear: vi.fn(),
   getClient: vi.fn(),
   getMyIssues: vi.fn(async () => []),
+  setDefaultLinearProjectIds: vi.fn(),
   ensureLinearAuthFresh: vi.fn(async () => {}),
 }));
 

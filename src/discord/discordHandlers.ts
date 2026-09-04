@@ -251,7 +251,7 @@ export async function handleIssue(msg: Message, issueId: string): Promise<void> 
       return;
     }
 
-    const issue = await linear.getIssue(issueId);
+    const issue = await linear.getScopedIssue(issueId);
 
     if (!issue) {
       await replyWithEmbed(msg, t('discord.issue.notFound', { id: issueId }), 0xff0000);
@@ -869,6 +869,10 @@ export async function handleAuto(msg: Message, args: string[]): Promise<void> {
   if (subCommand === 'run') {
     try {
       const runner = autonomous.getRunner();
+      // Manual dispatch is an operator's explicit request to see the current
+      // Linear queue. Do not let the normal five-minute discovery cache hide
+      // an issue that was just moved to Ready/Todo.
+      linear.clearLinearCache();
       await msg.reply(`🔄 ${t('discord.auto.runningHeartbeat')}`);
       await runner.runNow();
     } catch {

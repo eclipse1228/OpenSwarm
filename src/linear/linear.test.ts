@@ -7,8 +7,11 @@ import {
   effectCommentId,
   fetchIssuesForStates,
   getMyIssues,
+  getScopedIssue,
   initLinear,
   parseBlockerIdentifiers,
+  setDefaultLinearProjectIds,
+  updateIssueState,
 } from './linear.js';
 import { LinearClient } from '@linear/sdk';
 
@@ -63,9 +66,10 @@ describe('fetchIssuesForStates pagination', () => {
 describe('project-scoped autonomous Linear fetches', () => {
   afterEach(() => {
     clearLinearCache();
+    setDefaultLinearProjectIds(undefined);
   });
 
-  it('admits only mapped-project Todo/In Progress work and never fetches Backlog when parked', async () => {
+  it('admits mapped-project Todo, Ready, and In Progress work while excluding Backlog', async () => {
     const rawRequest = vi.fn(async (_query: string, _variables: { filter: Record<string, any> }) => ({
       data: {
         issues: {
@@ -76,6 +80,11 @@ describe('project-scoped autonomous Linear fetches', () => {
             {
               id: 'openswarm-todo', identifier: 'AGT-1', title: 'Mapped Todo', priority: 2,
               state: { name: 'Todo' }, project: { id: 'openswarm-project', name: 'OpenSwarm' },
+              labels: { nodes: [] },
+            },
+            {
+              id: 'openswarm-ready', identifier: 'AGT-READY', title: 'Mapped Ready', priority: 2,
+              state: { name: 'Ready' }, project: { id: 'openswarm-project', name: 'OpenSwarm' },
               labels: { nodes: [] },
             },
             {
@@ -109,7 +118,7 @@ describe('project-scoped autonomous Linear fetches', () => {
       includeBacklog: false,
     } as Parameters<typeof getMyIssues>[0]);
 
-    expect(issues.map((issue) => issue.id)).toEqual(['openswarm-todo']);
+    expect(issues.map((issue) => issue.id)).toEqual(['openswarm-todo', 'openswarm-ready']);
     expect(rawRequest).toHaveBeenCalledTimes(2);
     for (const [, variables] of rawRequest.mock.calls) {
       expect(variables.filter).toMatchObject({
@@ -118,6 +127,179 @@ describe('project-scoped autonomous Linear fetches', () => {
       expect(variables.filter.state.name.in).not.toContain('Backlog');
       expect(variables.filter.state.name.in).not.toContain('In Review');
     }
+    expect(rawRequest.mock.calls.map(([, variables]) => variables.filter.state.name.in)).toContainEqual(['Todo', 'Ready']);
+  });
+
+  function installScopeQueryClient() {
+    const rawRequest = vi.fn(async () => ({
+      data: {
+        issues: {
+          nodes: [
+            {
+              id: 'configured-project-todo', identifier: 'AGT-SCOPE-1', title: 'Configured project task', priority: 2,
+              state: { name: 'Todo' }, project: { id: 'configured-project', name: 'OpenSwarm' },
+              labels: { nodes: [] },
+            },
+            {
+              id: 'explicit-project-todo', identifier: 'AGT-SCOPE-2', title: 'Explicit override task', priority: 2,
+              state: { name: 'Todo' }, project: { id: 'explicit-project', name: 'Different project' },
+              labels: { nodes: [] },
+            },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    }));
+    vi.mocked(LinearClient).mockImplementation(function (this: unknown) {
+      return { client: { rawRequest } } as never;
+    } as never);
+    initLinear('oauth-token', 'agent-ko-korea', true);
+    return rawRequest;
+  }
+
+  it('uses the configured project scope for slim issue reads when the caller supplies none', async () => {
+    const rawRequest = installScopeQueryClient();
+    setDefaultLinearProjectIds(['configured-project']);
+
+    const issues = await getMyIssues({ slim: true, includeBacklog: false });
+
+    expect(issues.map((issue) => issue.id)).toEqual(['configured-project-todo']);
+    for (const [, variables] of rawRequest.mock.calls) {
+      expect(variables.filter).toMatchObject({
+        project: { id: { in: ['configured-project'] } },
+      });
+    }
+  });
+
+  it('lets an explicit slim issue scope override the configured default project scope', async () => {
+    const rawRequest = installScopeQueryClient();
+    setDefaultLinearProjectIds(['configured-project']);
+
+    const issues = await getMyIssues({
+      slim: true,
+      includeBacklog: false,
+      projectIds: ['explicit-project'],
+    });
+
+    expect(issues.map((issue) => issue.id)).toEqual(['explicit-project-todo']);
+    for (const [, variables] of rawRequest.mock.calls) {
+      expect(variables.filter).toMatchObject({
+        project: { id: { in: ['explicit-project'] } },
+      });
+    }
+  });
+
+  it('fails closed for slim issue reads when the configured project scope is explicitly empty', async () => {
+    const rawRequest = installScopeQueryClient();
+    setDefaultLinearProjectIds([]);
+
+    await expect(getMyIssues({ slim: true, includeBacklog: false })).resolves.toEqual([]);
+    expect(rawRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('project-scoped direct Linear issue lookups', () => {
+  afterEach(() => {
+    clearLinearCache();
+    setDefaultLinearProjectIds(undefined);
+  });
+
+  function makeDirectIssue(projectId: string) {
+    return {
+      id: 'direct-issue-id',
+      identifier: 'AGT-DIRECT-1',
+      title: 'Direct issue',
+      url: 'https://linear.app/agent-ko-korea/issue/AGT-DIRECT-1',
+      description: null,
+      priority: 2,
+      comments: vi.fn(async () => ({ nodes: [] })),
+      labels: vi.fn(async () => ({ nodes: [] })),
+      project: Promise.resolve({ id: projectId, name: 'OpenSwarm' }),
+      inverseRelations: vi.fn(async () => ({ nodes: [] })),
+      state: Promise.resolve({ name: 'Todo', type: 'unstarted' }),
+      createdAt: new Date('2026-09-04T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-04T00:00:00.000Z'),
+    };
+  }
+
+  function installDirectIssueClient(issue: ReturnType<typeof makeDirectIssue>) {
+    const linearIssue = vi.fn(async () => issue);
+    const rawRequest = vi.fn(async () => ({
+      data: {
+        issues: {
+          nodes: [{
+            id: issue.id,
+            identifier: issue.identifier,
+            title: issue.title,
+            url: issue.url,
+            description: issue.description,
+            priority: issue.priority,
+            state: { name: 'Todo' },
+            project: await issue.project,
+            labels: { nodes: [] },
+          }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    }));
+    vi.mocked(LinearClient).mockImplementation(function (this: unknown) {
+      return { issue: linearIssue, client: { rawRequest } } as never;
+    } as never);
+    initLinear('oauth-token', 'agent-ko-korea', true);
+    return linearIssue;
+  }
+
+  it('fails closed before fetching when no default project scope is configured', async () => {
+    const linearIssue = installDirectIssueClient(makeDirectIssue('foreign-project'));
+
+    await expect(getScopedIssue('direct-issue-id')).resolves.toBeUndefined();
+    expect(linearIssue).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before fetching when the configured default project scope is empty', async () => {
+    const linearIssue = installDirectIssueClient(makeDirectIssue('foreign-project'));
+    setDefaultLinearProjectIds([]);
+
+    await expect(getScopedIssue('direct-issue-id')).resolves.toBeUndefined();
+    expect(linearIssue).not.toHaveBeenCalled();
+  });
+
+  it('does not expose a directly addressed issue from another project', async () => {
+    const linearIssue = installDirectIssueClient(makeDirectIssue('foreign-project'));
+    setDefaultLinearProjectIds(['openswarm-project']);
+
+    await expect(getScopedIssue('direct-issue-id')).resolves.toBeUndefined();
+    // The preliminary mapped-project scan is allowed to receive a malformed
+    // foreign result, but the direct lookup must never dereference it.
+    expect(linearIssue).not.toHaveBeenCalled();
+  });
+
+  it('returns a directly addressed issue only when it belongs to the configured project scope', async () => {
+    const linearIssue = installDirectIssueClient(makeDirectIssue('openswarm-project'));
+    setDefaultLinearProjectIds(['openswarm-project']);
+
+    await expect(getScopedIssue('direct-issue-id')).resolves.toMatchObject({
+      id: 'direct-issue-id',
+      identifier: 'AGT-DIRECT-1',
+      project: { id: 'openswarm-project' },
+    });
+    expect(linearIssue).toHaveBeenCalledWith('direct-issue-id');
+  });
+});
+
+describe('unstarted state compatibility', () => {
+  it('moves a failed pilot task back to the team\'s Ready state when Todo is absent', async () => {
+    const updateIssue = vi.fn(async () => undefined);
+    const fakeClient = {
+      issue: vi.fn(async () => ({ team: Promise.resolve({ id: 'agent-ko-korea' }) })),
+      team: vi.fn(async () => ({ states: vi.fn(async () => ({ nodes: [{ id: 'ready-id', name: 'Ready' }] })) })),
+      updateIssue,
+    };
+    vi.mocked(LinearClient).mockImplementation(function (this: unknown) { return fakeClient as never; } as never);
+    initLinear('oauth-token', 'agent-ko-korea', true);
+
+    await expect(updateIssueState('issue-id', 'Todo', 0)).resolves.toBe(true);
+    expect(updateIssue).toHaveBeenCalledWith('issue-id', { stateId: 'ready-id' });
   });
 });
 

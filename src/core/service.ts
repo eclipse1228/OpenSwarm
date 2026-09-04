@@ -160,6 +160,20 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
     console.log('⏭ Linear not configured — skipping');
   }
 
+  // Set the mapped Linear-project boundary before Discord logs in. Otherwise a
+  // fast `!issues` or `!issue` message could observe the legacy team-wide
+  // lookup during service startup.
+  const linearConfigured = !!config.linearTeamId && (hasLinearOAuthProfile || !!config.linearApiKey);
+  const linearProjectIds = config.autonomous && linearConfigured
+    ? await mappedLinearProjectIds(config.autonomous.allowedProjects)
+    : [];
+  if (config.autonomous) {
+    // A restart can retain Linear's module client even when the new config has
+    // no valid credential. Keep Discord fail-closed rather than reverting to
+    // that old client's team-wide default.
+    linear.setDefaultLinearProjectIds(linearConfigured ? linearProjectIds : []);
+  }
+
   // Discord initialization (optional)
   if (isHumanSurfaceReadOnlyEnabled()) {
     // A connected bot can reply, type, and post through many handler paths.
@@ -273,10 +287,6 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
     // store (no external account). The Linear fetcher closure is preserved
     // verbatim — slim mode (1 resolver call/issue vs 3) + comment hydration +
     // task-state enrichment — and only used by LinearTaskSource.
-    const linearConfigured = !!config.linearTeamId && (hasLinearOAuthProfile || !!config.linearApiKey);
-    const linearProjectIds = linearConfigured
-      ? await mappedLinearProjectIds(config.autonomous.allowedProjects)
-      : [];
     if (linearConfigured && linearProjectIds.length === 0) {
       console.warn('[Service] No mapped Linear projects found — autonomous Linear fetches will fail closed');
     }

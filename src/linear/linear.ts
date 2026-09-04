@@ -38,10 +38,27 @@ async function getProjectInfo(issue: any): Promise<LinearProjectInfo | undefined
 let client: LinearClient | null = null;
 let teamId: string = '';
 let teamIds: string[] = [];
+// Service-level project scope for human-facing commands such as Discord
+// `!issues`. Undefined preserves the standalone CLI's legacy behavior; an
+// explicit empty array intentionally fails closed.
+let defaultLinearProjectIds: string[] | undefined;
 // OAuth runtime state — when the client was built from a Linear OAuth access
 // token, the token expires (~24h) and must be refreshed + the client rebuilt.
 let isOAuthMode = false;
 let currentToken = '';
+
+/**
+ * Linear calls the unstarted queue state different things across teams.  The
+ * OpenSwarm pilot normally uses `Todo`, while the configured Agent-ko-korea
+ * team uses Linear's built-in `Ready` state.  Keep this a deliberately small,
+ * exact alias set: arbitrary unstarted states must never become runnable by
+ * accident.
+ */
+const TODO_EQUIVALENT_STATE_NAMES = ['Todo', 'Ready'] as const;
+
+function isTodoEquivalentState(stateName: string | undefined): boolean {
+  return TODO_EQUIVALENT_STATE_NAMES.includes(stateName as typeof TODO_EQUIVALENT_STATE_NAMES[number]);
+}
 
 /** Build a Linear team filter that works for both single and multiple team IDs */
 function teamFilter() {
@@ -257,6 +274,18 @@ export function clearLinearCache(): void {
   backlogCache.clear();
   myIssuesCache.clear();
   console.log(`${status.info('[Linear]')} ${c.dim('cache cleared')}`);
+}
+
+/**
+ * Apply the service's mapped Linear-project boundary to calls that do not pass
+ * an explicit scope (notably Discord control commands). Never retain a caller
+ * array by reference, and clear cached team-wide results on a scope change.
+ */
+export function setDefaultLinearProjectIds(projectIds?: string[]): void {
+  defaultLinearProjectIds = projectIds === undefined
+    ? undefined
+    : [...new Set(projectIds.map((projectId) => projectId.trim()).filter(Boolean))];
+  clearLinearCache();
 }
 
 /**
@@ -654,10 +683,11 @@ export async function getMyIssues(
     : agentLabelOrOptions ?? {};
 
   const { agentLabel, slim = false, timeoutMs = 30000 } = opts;
-  const projectIds = [...new Set((opts.projectIds ?? [])
+  const requestedProjectIds = opts.projectIds ?? defaultLinearProjectIds;
+  const projectIds = [...new Set((requestedProjectIds ?? [])
     .map((projectId) => projectId.trim())
     .filter(Boolean))];
-  const projectScopeProvided = opts.projectIds !== undefined;
+  const projectScopeProvided = requestedProjectIds !== undefined;
   const includeBacklog = opts.includeBacklog ?? true;
 
   // An explicit but empty mapping is a fail-closed scope, not an invitation to
@@ -693,7 +723,7 @@ export async function getMyIssues(
     if (slim) {
       // Separate queries per state → tag each issue without resolver calls.
       const [todoIssues, inProgressIssues, backlogIssues] = await Promise.all([
-        fetchIssuesForStates(linear, ['Todo'], extraFilter),
+        fetchIssuesForStates(linear, [...TODO_EQUIVALENT_STATE_NAMES], extraFilter),
         fetchIssuesForStates(linear, ['In Progress'], extraFilter),
         includeBacklog ? fetchIssuesForStates(linear, ['Backlog'], extraFilter) : Promise.resolve({ nodes: [] }),
       ]);
@@ -701,7 +731,7 @@ export async function getMyIssues(
       // Defend the execution boundary in case a tracker query returns rows
       // outside its requested state filter.
       const withState = [
-        ...todoIssues.nodes.filter(i => i.state?.name === 'Todo').map(i => ({ issue: i, state: 'Todo' })),
+        ...todoIssues.nodes.filter(i => isTodoEquivalentState(i.state?.name)).map(i => ({ issue: i, state: 'Todo' })),
         ...inProgressIssues.nodes.filter(i => i.state?.name === 'In Progress').map(i => ({ issue: i, state: 'In Progress' })),
         ...backlogIssues.nodes.filter(i => i.state?.name === 'Backlog').map(i => ({ issue: i, state: 'Backlog' })),
       ];
@@ -735,7 +765,7 @@ export async function getMyIssues(
 
     // Full mode: fetch executable + backlog, then resolve per-issue
     const [executableIssues, backlogIssues] = await Promise.all([
-      fetchIssuesForStates(linear, ['Todo', 'In Progress'], extraFilter),
+      fetchIssuesForStates(linear, [...TODO_EQUIVALENT_STATE_NAMES, 'In Progress'], extraFilter),
       includeBacklog ? fetchIssuesForStates(linear, ['Backlog'], extraFilter) : Promise.resolve({ nodes: [] }),
     ]);
 
@@ -745,7 +775,7 @@ export async function getMyIssues(
       // consumer, task-state hydration, is also persisted locally); fetch lazily
       // per issue if a caller ever needs them.
       const allNodes = [
-        ...executableIssues.nodes.filter(i => ['Todo', 'In Progress'].includes(i.state?.name ?? '')),
+        ...executableIssues.nodes.filter(i => isTodoEquivalentState(i.state?.name) || i.state?.name === 'In Progress'),
         ...backlogIssues.nodes.filter(i => i.state?.name === 'Backlog'),
       ];
       for (const issue of allNodes) {
@@ -756,7 +786,7 @@ export async function getMyIssues(
           title: issue.title,
           url: issue.url,
           description: issue.description ?? undefined,
-          state: issue.state?.name ?? 'Unknown',
+          state: isTodoEquivalentState(issue.state?.name) ? 'Todo' : issue.state?.name ?? 'Unknown',
           priority: issue.priority,
           labels: issue.labels?.nodes?.map((l) => l.name) ?? [],
           comments: [],
@@ -844,6 +874,29 @@ export async function lookupIssue(issueIdOrIdentifier: string): Promise<IssueLoo
 export async function getIssue(issueIdOrIdentifier: string): Promise<LinearIssueInfo | null> {
   const result = await lookupIssue(issueIdOrIdentifier);
   return result.ok ? result.issue : null;
+}
+
+/**
+ * Resolve a single issue only after proving it belongs to the service's mapped
+ * project set. This is the Discord-facing lookup: it prevents an allowed
+ * operator from turning a foreign Linear identifier into a title, description,
+ * or comments posted to the shared channel.
+ */
+export async function getScopedIssue(issueIdOrIdentifier: string): Promise<LinearIssueInfo | undefined> {
+  if (defaultLinearProjectIds === undefined || defaultLinearProjectIds.length === 0) return undefined;
+
+  const candidates = await getMyIssues({
+    slim: true,
+    projectIds: defaultLinearProjectIds,
+    includeBacklog: true,
+  });
+  const candidate = candidates.find((issue) =>
+    issue.id === issueIdOrIdentifier || issue.identifier.toUpperCase() === issueIdOrIdentifier.toUpperCase(),
+  );
+  if (!candidate) return undefined;
+
+  const issue = await getIssue(candidate.id);
+  return issue?.project && defaultLinearProjectIds.includes(issue.project.id) ? issue : undefined;
 }
 
 async function fetchIssue(issueIdOrIdentifier: string): Promise<LinearIssueInfo | null> {
@@ -947,7 +1000,9 @@ export async function updateIssueState(
       const states = await team.states();
       const targetState = states.nodes.find((s) =>
         s.name.toLowerCase().includes(stateName.toLowerCase())
-      );
+      ) ?? (stateName === 'Todo'
+        ? states.nodes.find((s) => s.name === 'Ready')
+        : undefined);
 
       if (!targetState) {
         console.error(`[Linear] State "${stateName}" not found in team workflow`);
