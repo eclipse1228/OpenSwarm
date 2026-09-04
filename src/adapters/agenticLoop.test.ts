@@ -298,6 +298,35 @@ describe('runAgenticLoop timeout contract', () => {
 });
 
 describe('runAgenticLoop final-answer recovery (INT-2879)', () => {
+  it('strips tool-call transcripts from the no-tools salvage request', async () => {
+    let salvageMessages: ChatMessage[] | undefined;
+    let calls = 0;
+    const callApi = async (messages: ChatMessage[], tools: unknown[]) => {
+      calls++;
+      if (tools.length > 0) return toolCallResp('invalid-search', 'search_files', {});
+      salvageMessages = structuredClone(messages);
+      return finalResp('Decision: defer until the search query is specified.');
+    };
+
+    const result = await runAgenticLoop({
+      prompt: 'inspect the repository',
+      cwd: process.cwd(),
+      model: 'test',
+      callApi: callApi as never,
+      webTools: false,
+      maxTurns: 0,
+    });
+
+    expect(calls).toBe(2);
+    expect(result.text).toContain('Decision: defer');
+    expect(
+      salvageMessages
+        ?.filter((message) => message.role === 'assistant')
+        .flatMap((message) => message.tool_calls ?? []) ?? [],
+    ).toHaveLength(0);
+    expect(salvageMessages?.some((message) => message.role === 'tool')).toBe(false);
+  });
+
   it('routes a whitespace-only ordinary final response through recovery', async () => {
     const logs: string[] = [];
     let calls = 0;
