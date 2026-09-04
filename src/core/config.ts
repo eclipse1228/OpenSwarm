@@ -72,7 +72,9 @@ const DiscordConfigSchema = z.object({
 }).optional();
 
 const LinearConfigSchema = z.object({
-  apiKey: z.string().min(1, 'Linear API key is required'),
+  // OAuth profiles are stored outside config.yaml, so an OAuth-only setup needs
+  // only the team ID here. An empty API key remains a valid fallback absence.
+  apiKey: z.string().optional(),
   teamId: z.string().min(1, 'Linear team ID is required'),
 }).optional();
 
@@ -343,6 +345,8 @@ const AutonomousConfigSchema = z.object({
   backlogGrooming: BacklogGroomingConfigSchema,
   /** Git worktree mode: each task runs in isolated worktree */
   worktreeMode: z.boolean().default(false),
+  /** Permit automatic commit, push, and pull-request creation from worktrees. */
+  publishPullRequests: z.boolean().default(true),
   /** Allow concurrent tasks on the same repo (requires worktreeMode). (INT-1975) */
   allowSameProjectConcurrent: z.boolean().default(true),
   /**
@@ -367,6 +371,8 @@ const AutonomousConfigSchema = z.object({
   /** Max objective self-repair attempts (lint/bs/test) before giving up */
   maxReflections: z.number().min(1).max(10).default(3),
   coordinationBoardIssueId: z.string().min(1).optional(),
+  /** Import board comments only when a separately authenticated multi-host setup is enabled. */
+  coordinationBoardImport: z.boolean().default(false),
   mcpPolicies: z.record(z.string(), z.object({
     servers: z.array(z.string()).default([]),
     allowTools: z.array(z.string()).optional(),
@@ -765,6 +771,7 @@ function transformConfig(raw: RawConfig): SwarmConfig {
         maxIssues: raw.autonomous.backlogGrooming.maxIssues,
       } : undefined,
       worktreeMode: raw.autonomous.worktreeMode,
+      publishPullRequests: raw.autonomous.publishPullRequests,
       allowSameProjectConcurrent: raw.autonomous.allowSameProjectConcurrent,
       unknownScopeAdmission: raw.autonomous.unknownScopeAdmission,
       infraFailureCircuit: raw.autonomous.infraFailureCircuit,
@@ -776,6 +783,7 @@ function transformConfig(raw: RawConfig): SwarmConfig {
       // model selection silently fell back to defaultRoles. Carry it through.
       jobProfiles: raw.autonomous.jobProfiles,
       coordinationBoardIssueId: raw.autonomous.coordinationBoardIssueId,
+      coordinationBoardImport: raw.autonomous.coordinationBoardImport,
       mcpPolicies: raw.autonomous.mcpPolicies,
       adapterRouting: raw.autonomous.adapterRouting,
       periodicReviews: raw.autonomous.periodicReviews,
@@ -841,8 +849,8 @@ export function loadConfig(customPath?: string): SwarmConfig {
     delete substituted.discord;
   }
   const linearBlock = substituted.linear as Record<string, unknown> | undefined;
-  if (linearBlock && (!linearBlock.apiKey || !linearBlock.teamId)) {
-    console.log(status.warn('[Config] Linear credentials not set — disabling Linear integration'));
+  if (linearBlock && !linearBlock.teamId) {
+    console.log(status.warn('[Config] Linear team ID not set — disabling Linear integration'));
     delete substituted.linear;
   }
 

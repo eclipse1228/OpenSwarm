@@ -1,5 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import { addComment, createSubIssue, drainLinearConnection, effectCommentId, fetchIssuesForStates, initLinear, parseBlockerIdentifiers } from './linear.js';
+import {
+  addComment,
+  clearLinearCache,
+  createSubIssue,
+  drainLinearConnection,
+  effectCommentId,
+  fetchIssuesForStates,
+  getMyIssues,
+  initLinear,
+  parseBlockerIdentifiers,
+} from './linear.js';
 import { LinearClient } from '@linear/sdk';
 
 // createSubIssue reads the module-level client singleton (getClient()), set only
@@ -47,6 +57,67 @@ describe('fetchIssuesForStates pagination', () => {
       },
     } as unknown as LinearClient;
     await expect(fetchIssuesForStates(linear, ['Todo'])).rejects.toThrow(/safety cap/);
+  });
+});
+
+describe('project-scoped autonomous Linear fetches', () => {
+  afterEach(() => {
+    clearLinearCache();
+  });
+
+  it('admits only mapped-project Todo/In Progress work and never fetches Backlog when parked', async () => {
+    const rawRequest = vi.fn(async (_query: string, _variables: { filter: Record<string, any> }) => ({
+      data: {
+        issues: {
+          // Deliberately return malformed server-side results as well: the
+          // daemon must defend the execution boundary even if a tracker query
+          // broadens unexpectedly.
+          nodes: [
+            {
+              id: 'openswarm-todo', identifier: 'AGT-1', title: 'Mapped Todo', priority: 2,
+              state: { name: 'Todo' }, project: { id: 'openswarm-project', name: 'OpenSwarm' },
+              labels: { nodes: [] },
+            },
+            {
+              id: 'other-project-todo', identifier: 'AGT-2', title: 'Foreign Todo', priority: 1,
+              state: { name: 'Todo' }, project: { id: 'other-project', name: 'Other' },
+              labels: { nodes: [] },
+            },
+            {
+              id: 'openswarm-backlog', identifier: 'AGT-3', title: 'Parked Backlog', priority: 1,
+              state: { name: 'Backlog' }, project: { id: 'openswarm-project', name: 'OpenSwarm' },
+              labels: { nodes: [] },
+            },
+            {
+              id: 'openswarm-review', identifier: 'AGT-4', title: 'Human review in progress', priority: 1,
+              state: { name: 'In Review' }, project: { id: 'openswarm-project', name: 'OpenSwarm' },
+              labels: { nodes: [] },
+            },
+          ],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    }));
+    vi.mocked(LinearClient).mockImplementation(function (this: unknown) {
+      return { client: { rawRequest } } as never;
+    } as never);
+    initLinear('oauth-token', 'agent-ko-korea', true);
+
+    const issues = await getMyIssues({
+      slim: true,
+      projectIds: ['openswarm-project'],
+      includeBacklog: false,
+    } as Parameters<typeof getMyIssues>[0]);
+
+    expect(issues.map((issue) => issue.id)).toEqual(['openswarm-todo']);
+    expect(rawRequest).toHaveBeenCalledTimes(2);
+    for (const [, variables] of rawRequest.mock.calls) {
+      expect(variables.filter).toMatchObject({
+        project: { id: { in: ['openswarm-project'] } },
+      });
+      expect(variables.filter.state.name.in).not.toContain('Backlog');
+      expect(variables.filter.state.name.in).not.toContain('In Review');
+    }
   });
 });
 

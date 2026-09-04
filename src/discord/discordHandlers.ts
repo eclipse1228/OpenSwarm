@@ -4,7 +4,6 @@
 // All command handlers (!status, !dev, etc.)
 
 import {
-  TextChannel,
   Message,
   EmbedBuilder,
 } from 'discord.js';
@@ -14,15 +13,12 @@ import * as dev from '../support/dev.js';
 import * as scheduler from '../automation/scheduler.js';
 import * as codex from '../memory/codex.js';
 import * as autonomous from '../automation/autonomousRunner.js';
-import { selectTaskSource } from '../automation/taskSource.js';
-import { linearIssueToTask, TaskItem } from '../orchestration/decisionEngine.js';
 
 import {
   onPauseAgent,
   onResumeAgent,
   getAgentStatus,
   getGithubRepos,
-  pairModeConfig,
   formatTimeAgo,
 } from './discordCore.js';
 import { t, getDateLocale } from '../locale/index.js';
@@ -854,78 +850,11 @@ export async function handleAuto(msg: Message, args: string[]): Promise<void> {
     return;
   }
 
-  // !auto start [schedule] [--pair] - Start
+  // The daemon starts one configuration-scoped runner. Recreating it here used
+  // hard-coded project paths, all-team Linear queries, and publication defaults.
+  // Keep Discord as a control surface, not an escape hatch around config.yaml.
   if (subCommand === 'start') {
-    // Check --pair option
-    const hasPairFlag = args.includes('--pair') || args.includes('pair');
-    const scheduleArg = args.find(a => a !== 'start' && a !== '--pair' && a !== 'pair');
-    const schedule = scheduleArg || '*/30 * * * *'; // Default: every 30 minutes
-
-    const startingMsg = hasPairFlag ? t('discord.auto.startingPair') : t('discord.auto.startingSolo');
-    await msg.reply(`🚀 ${startingMsg}\nSchedule: \`${schedule}\``);
-
-    try {
-      // Register a notifier that reports back to the command's channel.
-      autonomous.setNotifier({
-        async notify(message: string | EmbedBuilder) {
-          const channel = msg.channel as TextChannel;
-          if (typeof message === 'string') {
-            await channel.send(message);
-          } else {
-            await channel.send({ embeds: [message] });
-          }
-        },
-      });
-
-      // Register the task source (Linear when configured, else local SQLite).
-      autonomous.setTaskSource(selectTaskSource(linear.isLinearInitialized(), async (): Promise<TaskItem[]> => {
-        try {
-          const issues = await linear.getMyIssues({ slim: true, timeoutMs: 30000 });
-          return issues.map((issue: any) => linearIssueToTask({
-            id: issue.id,
-            identifier: issue.identifier,
-            title: issue.title,
-            url: issue.url,
-            description: issue.description,
-            priority: issue.priority || 3,
-            dueDate: issue.dueDate,
-            state: issue.state,
-            labels: issue.labels,
-            updatedAt: issue.updatedAt,
-            project: issue.project ? {
-              id: issue.project.id,
-              name: issue.project.name,
-            } : undefined,
-          }));
-        } catch (err) {
-          console.error('Linear fetch error:', err);
-          return [];
-        }
-      }));
-
-      // Start runner
-      console.log(`[Auto] Starting with pairMode: ${hasPairFlag}`);
-      await autonomous.startAutonomous({
-        linearTeamId: process.env.LINEAR_TEAM_ID || '',
-        allowedProjects: ['~/dev/OpenSwarm', '~/dev/tools/pykis', '~/dev'],
-        heartbeatSchedule: schedule,
-        autoExecute: true, // Auto-execute (no approval needed)
-        dryRun: false,
-        pairMode: hasPairFlag,
-        pairMaxAttempts: pairModeConfig?.maxAttempts ?? 3,
-        maxConcurrentTasks: 4,
-        enableDecomposition: true,
-        decompositionThresholdMinutes: 30,
-        worktreeMode: true,
-      });
-
-      const startMsg = hasPairFlag
-        ? `✅ ${t('discord.auto.startedPair')}`
-        : `✅ ${t('discord.auto.startedSolo')}`;
-      await msg.reply(startMsg);
-    } catch (err) {
-      await msg.reply(`❌ ${t('discord.errors.startFailed', { error: err instanceof Error ? err.message : String(err) })}`);
-    }
+    await msg.reply('⚠️ `!auto start` is disabled: the daemon runner must use the scoped safety policy in config.yaml. Use `!auto run` to trigger its next heartbeat or `!auto status` to inspect it.');
     return;
   }
 

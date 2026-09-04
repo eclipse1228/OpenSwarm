@@ -3,48 +3,77 @@
 // ============================================
 
 import type { ITaskSource } from '../automation/taskSource.js';
-import type { CoordinationEvent } from './coordinationStore.js';
+import { redactCoordinationText, type CoordinationEvent } from './coordinationStore.js';
 
 const MARKER = '<!-- openswarm-coordination:';
+const BOARD_SUMMARY_LIMIT = 500;
+const BOARD_DETAIL_LIMIT = 4_000;
+const OMIT_DETAIL_KINDS = new Set<CoordinationEvent['kind']>([
+  'human-answer',
+  'mcp-audit',
+  'instruction-snapshot',
+]);
+
+/**
+ * Linear is a remote, human-facing coordination surface. Keep it useful for
+ * progress while ensuring it never becomes a copy of prompts, tool arguments,
+ * or a person's potentially sensitive answer.
+ */
+function eventForCoordinationBoard(event: CoordinationEvent): CoordinationEvent {
+  const detail = event.kind === 'human-answer'
+    ? 'Answer received; contents remain in local coordination state.'
+    : OMIT_DETAIL_KINDS.has(event.kind)
+      ? undefined
+      : event.detail ? redactCoordinationText(event.detail, BOARD_DETAIL_LIMIT) : undefined;
+
+  return {
+    ...event,
+    summary: redactCoordinationText(event.summary, BOARD_SUMMARY_LIMIT),
+    detail,
+    // Metadata may contain an MCP invocation envelope. It is intentionally
+    // useful locally but must never be mirrored to Linear.
+    metadata: undefined,
+  };
+}
 
 export function formatCoordinationComment(event: CoordinationEvent): string {
+  const safeEvent = eventForCoordinationBoard(event);
   const body = {
     version: 1,
-    id: event.id,
-    seq: event.seq,
-    repository: event.repository,
-    repoKey: event.repoKey,
-    taskId: event.taskId,
-    taskLabel: event.taskLabel,
-    sourceTaskId: event.sourceTaskId,
-    sourceTaskLabel: event.sourceTaskLabel,
-    targetTaskId: event.targetTaskId,
-    targetTaskLabel: event.targetTaskLabel,
-    actor: event.actor,
+    id: safeEvent.id,
+    seq: safeEvent.seq,
+    repository: safeEvent.repository,
+    repoKey: safeEvent.repoKey,
+    taskId: safeEvent.taskId,
+    taskLabel: safeEvent.taskLabel,
+    sourceTaskId: safeEvent.sourceTaskId,
+    sourceTaskLabel: safeEvent.sourceTaskLabel,
+    targetTaskId: safeEvent.targetTaskId,
+    targetTaskLabel: safeEvent.targetTaskLabel,
+    actor: safeEvent.actor,
     // Call signs travel with the message: a board comment restored on another
     // host would otherwise show routing addresses where the operator expects
     // the name the agent is known by.
-    actorName: event.actorName,
-    actorRole: event.actorRole,
-    recipient: event.recipient,
-    recipientName: event.recipientName,
-    recipientRole: event.recipientRole,
-    kind: event.kind,
-    status: event.status,
-    correlationId: event.correlationId,
-    summary: event.summary,
-    detail: event.detail,
-    metadata: event.metadata,
-    fingerprint: event.fingerprint,
-    timestamp: event.timestamp,
+    actorName: safeEvent.actorName,
+    actorRole: safeEvent.actorRole,
+    recipient: safeEvent.recipient,
+    recipientName: safeEvent.recipientName,
+    recipientRole: safeEvent.recipientRole,
+    kind: safeEvent.kind,
+    status: safeEvent.status,
+    correlationId: safeEvent.correlationId,
+    summary: safeEvent.summary,
+    detail: safeEvent.detail,
+    fingerprint: safeEvent.fingerprint,
+    timestamp: safeEvent.timestamp,
   };
   return [
-    `## Agent board — ${event.kind}`,
+    `## Agent board — ${safeEvent.kind}`,
     '',
-    `**${event.actorName ?? event.actor} → ${event.recipientName ?? event.recipient ?? 'all'}** · ${event.status}`,
+    `**${safeEvent.actorName ?? safeEvent.actor} → ${safeEvent.recipientName ?? safeEvent.recipient ?? 'all'}** · ${safeEvent.status}`,
     '',
-    event.summary,
-    ...(event.detail ? ['', event.detail] : []),
+    safeEvent.summary,
+    ...(safeEvent.detail ? ['', safeEvent.detail] : []),
     '',
     `${MARKER}${Buffer.from(JSON.stringify(body)).toString('base64url')} -->`,
   ].join('\n');

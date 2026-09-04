@@ -46,6 +46,8 @@ export interface AutonomousConfig {
   decomposition?: import('../core/types.js').DecompositionConfig;
   backlogGrooming?: BacklogGroomingConfig;
   worktreeMode?: boolean;
+  /** Permit automatic commit, push, and pull-request creation from worktrees. */
+  publishPullRequests?: boolean;
   /** Allow concurrent tasks on the same repo (requires worktreeMode). Default true. (INT-1975) */
   allowSameProjectConcurrent?: boolean;
   /**
@@ -75,6 +77,8 @@ export interface AutonomousConfig {
   shutdownGraceMs?: number;
   /** Project-scoped coordination issue ID used as the durable Linear agent board. */
   coordinationBoardIssueId?: string;
+  /** Whether to import coordination events from a remote Linear board. Default false. */
+  coordinationBoardImport?: boolean;
   /** Role-scoped MCP policies; orchestrator defaults to no tools. */
   mcpPolicies?: Partial<Record<'orchestrator' | 'worker' | 'reviewer', RoleMcpPolicy>>;
   /** Typed execution adapter routing policy. */

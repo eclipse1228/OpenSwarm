@@ -308,7 +308,9 @@ agents:
         agents: [{ name: 'main', projectPath: '/p', enabled: true, paused: false }],
         autonomous: {
           enabled: true,
+          publishPullRequests: false,
           coordinationBoardIssueId: 'AGT-3993',
+          coordinationBoardImport: false,
           adapterRouting: { primary: 'codex', fallbacks: ['cc-router', 'cursor'], allowReasons: ['quota', 'infra'] },
           mcpPolicies: { orchestrator: { servers: ['github', 'linear'], writeTools: ['linear__save_comment'] } },
           periodicReviews: [{ profile: 'hygiene', schedule: '43 */6 * * *' }],
@@ -318,7 +320,9 @@ agents:
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(jsonContent);
       const config = loadConfig('/tmp/config.json');
+      expect(config.autonomous?.publishPullRequests).toBe(false);
       expect(config.autonomous?.coordinationBoardIssueId).toBe('AGT-3993');
+      expect(config.autonomous?.coordinationBoardImport).toBe(false);
       expect(config.autonomous?.adapterRouting?.fallbacks).toEqual(['cc-router', 'cursor']);
       expect(config.autonomous?.mcpPolicies?.orchestrator.servers).toEqual(['github', 'linear']);
       expect(config.autonomous?.periodicReviews?.[0]).toMatchObject({ profile: 'hygiene' });
@@ -848,6 +852,27 @@ agents:
       const config = loadConfig('/tmp/config.yaml');
       expect(config.linearTeamId).toBe('');
       expect(config.discordToken).toBe('test-token');
+    });
+
+    it('preserves a Linear team ID without an API key for OAuth-only profiles', () => {
+      const yamlContent = `
+language: en
+discord:
+  token: test-token
+  channelId: test-channel-id
+linear:
+  teamId: test-team-id
+agents:
+  - name: main
+    projectPath: /path/to/project
+`;
+
+      vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(readFileSync).mockReturnValue(yamlContent);
+
+      const config = loadConfig('/tmp/config.yaml');
+      expect(config.linearTeamId).toBe('test-team-id');
+      expect(config.linearApiKey).toBe('');
     });
 
     it('should reject config without at least one agent', () => {

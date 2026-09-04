@@ -604,8 +604,10 @@ export type AutonomousStartupConfig = {
   decomposition?: DecompositionConfig;
   /** Whole-backlog grooming planner config */
   backlogGrooming?: BacklogGroomingConfig;
-  /** Git worktree mode: work in independent worktree per issue and auto-create PR */
+  /** Git worktree mode: work in an independent worktree per issue. */
   worktreeMode?: boolean;
+  /** Permit automatic commit, push, and pull-request creation from worktrees. */
+  publishPullRequests?: boolean;
   /**
    * Allow concurrent tasks on the SAME repo. Requires worktreeMode (per-task
    * filesystem isolation); ignored otherwise to avoid corrupting a shared tree.
@@ -633,6 +635,8 @@ export type AutonomousStartupConfig = {
   /** Job profiles used to select models based on task traits */
   jobProfiles?: JobProfile[];
   coordinationBoardIssueId?: string;
+  /** Whether to import coordination events from a remote Linear board. Default false. */
+  coordinationBoardImport?: boolean;
   mcpPolicies?: Record<string, { servers: string[]; allowTools?: string[]; writeTools?: string[]; destructiveTools?: string[] }>;
   adapterRouting?: { primary?: import('../adapters/types.js').AdapterName; fallbacks?: import('../adapters/types.js').AdapterName[]; allowReasons?: Array<'quota' | 'infra' | 'capability'> };
   periodicReviews?: Array<{ profile: 'permissions' | 'hygiene' | 'security' | 'review'; schedule: string; adapter?: 'codex' | 'cc-router' | 'cursor' }>;

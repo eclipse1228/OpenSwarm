@@ -246,10 +246,15 @@ describe('CoordinationStore', () => {
 
   it('redacts secret fields and values before persistence', async () => {
     const s = store();
-    await s.publish(message({ detail: 'Bearer abcdefghijk', metadata: { apiKey: 'secret', note: 'ghp_abcdefghijk' } }));
+    await s.publish(message({
+      detail: 'Bearer abcdefghijk DISCORD_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccc',
+      metadata: { apiKey: 'secret', note: 'ghp_abcdefghijk', linearToken: 'linear_api_private_value' },
+    }));
     const raw = readFileSync(join(dir, 'events.json'), 'utf8');
     expect(raw).not.toContain('abcdefghijk');
     expect(raw).not.toContain('secret');
+    expect(raw).not.toContain('aaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(raw).not.toContain('linear_api_private_value');
     expect(raw).toContain('[redacted]');
     expect(statSync(join(dir, 'events.json')).mode & 0o777).toBe(0o600);
   });

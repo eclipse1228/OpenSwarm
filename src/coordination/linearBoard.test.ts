@@ -36,6 +36,26 @@ describe('TrackerCoordinationBoard', () => {
     expect(parseCoordinationComment(formatCoordinationComment(routed))).toEqual(routed);
   });
 
+  it('keeps human answers and tool metadata out of the remote coordination board', () => {
+    const privateAnswer = {
+      ...event,
+      kind: 'human-answer' as const,
+      detail: 'DISCORD_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa.bbbbbb.ccccccccccccccccccccccccccc',
+      metadata: { toolArguments: '{"token":"linear_api_private_value"}' },
+    };
+
+    const body = formatCoordinationComment(privateAnswer);
+    expect(body).not.toContain('aaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(body).not.toContain('linear_api_private_value');
+    const parsed = parseCoordinationComment(body);
+    expect(parsed).toMatchObject({
+      ...event,
+      kind: 'human-answer',
+      detail: 'Answer received; contents remain in local coordination state.',
+    });
+    expect(parsed).not.toHaveProperty('metadata');
+  });
+
   it('publishes idempotently and reads only board messages', async () => {
     const addComment = vi.fn(async () => {});
     const source = {

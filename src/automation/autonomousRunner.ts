@@ -242,8 +242,13 @@ async function publishAndCleanupStuckWorktree(
   projectPath: string,
   parkReason: string,
   ownsRun: boolean,
+  publishPullRequests: boolean,
 ): Promise<string | undefined> {
   let prUrl: string | undefined;
+  if (!publishPullRequests) {
+    console.log(`[Worktree] Automatic publication disabled for ${task.issueIdentifier}; preserving local worktree`);
+    return undefined;
+  }
   await removePreservedWorktreeAt(
     projectPath,
     ownsRun
@@ -916,6 +921,7 @@ export class AutonomousRunner {
               task, result.taskContext.projectPath,
               `the DoD appears unsatisfiable in the sandbox after ${attempts} attempts (marker: "${infeasible.marker}")`,
               ownsRun,
+              this.config.publishPullRequests !== false,
             );
           }
           try {
@@ -972,6 +978,7 @@ export class AutonomousRunner {
               task, result.taskContext.projectPath,
               `the reviewer rejected ${rejectionCount} attempts`,
               ownsRun,
+              this.config.publishPullRequests !== false,
             );
           }
 
@@ -1039,6 +1046,7 @@ export class AutonomousRunner {
               task, result.taskContext.projectPath,
               `autonomous execution failed ${count} times`,
               ownsRun,
+              this.config.publishPullRequests !== false,
             );
           }
           try {
@@ -2994,6 +3002,7 @@ export class AutonomousRunner {
       getRolesForProject: (p) => this.getRolesForProject(p),
       reportToDiscord,
       worktreeMode: this.config.worktreeMode ?? false,
+      publishPullRequests: this.config.publishPullRequests,
       scheduleNextHeartbeat: () => this.scheduleNextHeartbeat(),
       guards: this.config.guards,
       verify: this.config.verify,

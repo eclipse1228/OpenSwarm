@@ -321,7 +321,11 @@ export async function ensureLinearAuthFresh(): Promise<void> {
       console.log(`${status.ok('[Linear] OAuth token refreshed')} ${c.dim('client reinitialized')}`);
     }
   } catch (err) { // cxt-ignore: error_swallow,exception_hiding — best-effort; logged, must not crash the heartbeat
-    console.error(`[Linear] OAuth refresh failed: ${(err as Error).message}`);
+    const statusCode = typeof err === 'object' && err !== null && 'status' in err
+      && typeof (err as { status?: unknown }).status === 'number'
+      ? ` (HTTP ${(err as { status: number }).status})`
+      : '';
+    console.error(`[Linear] OAuth refresh failed${statusCode}; run \`openswarm auth login --provider linear\` if it persists`);
   }
 }
 
@@ -549,6 +553,10 @@ export async function getNextBacklogIssue(
  */
 export interface GetMyIssuesOptions {
   agentLabel?: string;
+  /** Restrict autonomous work to explicitly mapped Linear projects. */
+  projectIds?: string[];
+  /** Whether Backlog issues are eligible for retrieval (default preserves legacy callers). */
+  includeBacklog?: boolean;
   /**
    * Slim mode: skip N+1 queries for comments/labels/project.
    * Returns only core fields (id, identifier, title, description, priority, state, project).
@@ -646,9 +654,18 @@ export async function getMyIssues(
     : agentLabelOrOptions ?? {};
 
   const { agentLabel, slim = false, timeoutMs = 30000 } = opts;
+  const projectIds = [...new Set((opts.projectIds ?? [])
+    .map((projectId) => projectId.trim())
+    .filter(Boolean))];
+  const projectScopeProvided = opts.projectIds !== undefined;
+  const includeBacklog = opts.includeBacklog ?? true;
+
+  // An explicit but empty mapping is a fail-closed scope, not an invitation to
+  // read every project in the configured Linear team.
+  if (projectScopeProvided && projectIds.length === 0) return [];
 
   // Generate cache key
-  const cacheKey = `${agentLabel || 'all'}:${slim}`;
+  const cacheKey = `${agentLabel || 'all'}:${slim}:${includeBacklog}:${projectIds.sort().join(',') || 'all'}`;
 
   // Check cache first
   const cached = myIssuesCache.get(cacheKey);
@@ -671,19 +688,22 @@ export async function getMyIssues(
 
     const extraFilter: Record<string, unknown> = {};
     if (agentLabel) extraFilter.labels = { name: { eq: agentLabel } };
+    if (projectIds.length > 0) extraFilter.project = { id: { in: projectIds } };
 
     if (slim) {
       // Separate queries per state → tag each issue without resolver calls.
       const [todoIssues, inProgressIssues, backlogIssues] = await Promise.all([
         fetchIssuesForStates(linear, ['Todo'], extraFilter),
-        fetchIssuesForStates(linear, ['In Progress', 'In Review'], extraFilter),
-        fetchIssuesForStates(linear, ['Backlog'], extraFilter),
+        fetchIssuesForStates(linear, ['In Progress'], extraFilter),
+        includeBacklog ? fetchIssuesForStates(linear, ['Backlog'], extraFilter) : Promise.resolve({ nodes: [] }),
       ]);
 
+      // Defend the execution boundary in case a tracker query returns rows
+      // outside its requested state filter.
       const withState = [
-        ...todoIssues.nodes.map(i => ({ issue: i, state: 'Todo' })),
-        ...inProgressIssues.nodes.map(i => ({ issue: i, state: i.state?.name ?? 'Unknown' })),
-        ...backlogIssues.nodes.map(i => ({ issue: i, state: 'Backlog' })),
+        ...todoIssues.nodes.filter(i => i.state?.name === 'Todo').map(i => ({ issue: i, state: 'Todo' })),
+        ...inProgressIssues.nodes.filter(i => i.state?.name === 'In Progress').map(i => ({ issue: i, state: 'In Progress' })),
+        ...backlogIssues.nodes.filter(i => i.state?.name === 'Backlog').map(i => ({ issue: i, state: 'Backlog' })),
       ];
 
       // project is embedded in each node (nested GraphQL) — no per-issue resolver call.
@@ -705,14 +725,18 @@ export async function getMyIssues(
         } as LinearIssueInfo);
       }
 
-      await populateBlockedBy(result, new Map(withState.map(({ issue }) => [issue.id, issue])));
-      return result;
+      const scoped = result.filter((issue) =>
+        (!projectIds.length || projectIds.includes(issue.project?.id ?? ''))
+        && (includeBacklog || issue.state !== 'Backlog')
+      );
+      await populateBlockedBy(scoped, new Map(withState.map(({ issue }) => [issue.id, issue])));
+      return scoped;
     }
 
     // Full mode: fetch executable + backlog, then resolve per-issue
     const [executableIssues, backlogIssues] = await Promise.all([
-      fetchIssuesForStates(linear, ['Todo', 'In Progress', 'In Review'], extraFilter),
-      fetchIssuesForStates(linear, ['Backlog'], extraFilter),
+      fetchIssuesForStates(linear, ['Todo', 'In Progress'], extraFilter),
+      includeBacklog ? fetchIssuesForStates(linear, ['Backlog'], extraFilter) : Promise.resolve({ nodes: [] }),
     ]);
 
     {
@@ -720,7 +744,10 @@ export async function getMyIssues(
       // per-issue resolver calls. comments are no longer bulk-fetched (the only
       // consumer, task-state hydration, is also persisted locally); fetch lazily
       // per issue if a caller ever needs them.
-      const allNodes = [...executableIssues.nodes, ...backlogIssues.nodes];
+      const allNodes = [
+        ...executableIssues.nodes.filter(i => ['Todo', 'In Progress'].includes(i.state?.name ?? '')),
+        ...backlogIssues.nodes.filter(i => i.state?.name === 'Backlog'),
+      ];
       for (const issue of allNodes) {
         const p = issue.project;
         result.push({
@@ -739,6 +766,11 @@ export async function getMyIssues(
         });
       }
 
+      const scoped = result.filter((issue) =>
+        (!projectIds.length || projectIds.includes(issue.project?.id ?? ''))
+        && (includeBacklog || issue.state !== 'Backlog')
+      );
+      result.splice(0, result.length, ...scoped);
       await populateBlockedBy(result, new Map(allNodes.map((n) => [n.id, n])));
     }
 

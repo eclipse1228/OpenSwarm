@@ -784,6 +784,19 @@ describe('runnerExecution.ts coverage extension', () => {
       expect(preserveWorktree).not.toHaveBeenCalled();
     });
 
+    it('keeps approved work local when automatic publication is disabled', async () => {
+      createWorktree.mockResolvedValue(worktreeInfoFixture());
+      createPipelineFromConfig.mockReturnValue(makeFakePipeline(pipelineResult({ finalStatus: 'approved', success: true })));
+
+      const result = await executePipeline(makeCtx({ worktreeMode: true, publishPullRequests: false }), task(), '/repo');
+
+      expect(result).toMatchObject({ success: true, finalStatus: 'approved' });
+      expect(result.prUrl).toBeUndefined();
+      expect(commitAndCreatePR).not.toHaveBeenCalled();
+      expect(preserveWorktree).toHaveBeenCalledWith(expect.objectContaining({ issueId: 'issue-1' }), 'automatic publication disabled');
+      expect(removeWorktree).not.toHaveBeenCalled();
+    });
+
     it('returns a repository-scoped infra_error without ever constructing the pipeline when worktree creation fails (AGT-4038)', async () => {
       createWorktree.mockRejectedValue(new Error('git worktree add: disk full'));
       const result = await executePipeline(makeCtx({ worktreeMode: true }), task(), '/repo');

@@ -13,6 +13,9 @@ import { readProviderOverride } from './providerOverride.js';
 import * as autonomousRunner from '../automation/autonomousRunner.js';
 import { resetHumanSurfaceReadOnlyForTests } from '../mcp/humanSurfacePolicy.js';
 
+const linearOAuthProfile = vi.hoisted(() => vi.fn());
+const linearOAuthToken = vi.hoisted(() => vi.fn());
+
 // Mock external dependencies
 // Mock auth so service.test never reads the real ~/.openswarm/auth-profiles.json
 // (a present linear:default OAuth profile would route Linear init down the OAuth
@@ -20,16 +23,17 @@ import { resetHumanSurfaceReadOnlyForTests } from '../mcp/humanSurfacePolicy.js'
 vi.mock('../auth/index.js', () => ({
   AuthProfileStore: class {
     getProfile() {
-      return null;
+      return linearOAuthProfile();
     }
   },
-  ensureValidToken: vi.fn(),
+  ensureValidToken: linearOAuthToken,
 }));
 
 vi.mock('../linear/index.js', () => ({
   initLinear: vi.fn(),
   getClient: vi.fn(),
   getMyIssues: vi.fn(async () => []),
+  ensureLinearAuthFresh: vi.fn(async () => {}),
 }));
 
 vi.mock('../discord/index.js', () => ({
@@ -210,6 +214,8 @@ describe('service', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    linearOAuthProfile.mockReturnValue(null);
+    linearOAuthToken.mockResolvedValue('oauth-access-token');
   });
 
   afterEach(async () => {
@@ -370,6 +376,21 @@ describe('service', () => {
         {},
         {}
       );
+    });
+
+    it('uses an OAuth-only Linear profile as the autonomous task source', async () => {
+      const { initLinear } = await import('../linear/index.js');
+      const { setTaskSource } = await import('../automation/autonomousRunner.js');
+      linearOAuthProfile.mockReturnValue({ provider: 'linear', accessToken: 'stored-token' });
+
+      await startService({
+        ...mockAutonomousConfig,
+        linearApiKey: '',
+      });
+
+      expect(linearOAuthToken).toHaveBeenCalledWith(expect.anything(), 'linear:default');
+      expect(initLinear).toHaveBeenCalledWith('oauth-access-token', mockConfig.linearTeamId, true);
+      expect(vi.mocked(setTaskSource)).toHaveBeenCalledWith(expect.objectContaining({ kind: 'linear' }));
     });
 
     it('maps each configured project repository to its Discord project channel', async () => {

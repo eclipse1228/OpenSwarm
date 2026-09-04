@@ -287,10 +287,9 @@ export async function ensureValidToken(store: AuthProfileStore, profileKey: stri
   });
 
   if (!res.ok) {
-    const errText = await res.text().catch(() => '');
     const reauth = profile.provider === 'linear' ? 'linear' : 'gpt';
     throw new TokenRefreshError(
-      `Token refresh failed (${res.status}): ${errText.slice(0, 200)}. Run: openswarm auth login --provider ${reauth}`,
+      `Token refresh failed (${res.status}). Run: openswarm auth login --provider ${reauth}`,
       res.status,
     );
   }
