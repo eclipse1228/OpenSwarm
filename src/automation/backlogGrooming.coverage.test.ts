@@ -134,6 +134,10 @@ describe('runBacklogGroomingPlanner', () => {
     const result = await runBacklogGroomingPlanner({ tasks: [baseTask()], projectPath: '/repo' });
     expect(result.success).toBe(true);
     expect(result.decisions.map(d => d.issueId)).toEqual(['id-1']);
+    expect(spawnCli).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      maxTurns: 8,
+      readOnly: true,
+    }));
   });
 
   it('still attempts to parse stdout when exit code is non-zero but stdout is non-empty', async () => {

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  getIssue: vi.fn(),
+  getScopedIssue: vi.fn(),
   resolveRepoPath: vi.fn((project: string) => project),
   createPairSession: vi.fn(),
   setSessionThreadId: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock('discord.js', () => ({
   },
 }));
 
-vi.mock('../linear/index.js', () => ({ getIssue: mocks.getIssue }));
+vi.mock('../linear/index.js', () => ({ getScopedIssue: mocks.getScopedIssue, getMyIssues: vi.fn(async () => []) }));
 vi.mock('../support/dev.js', () => ({ resolveRepoPath: mocks.resolveRepoPath }));
 vi.mock('../support/gitTracker.js', () => ({ isDirty: mocks.isDirty }));
 vi.mock('../agents/agentPair.js', () => ({
@@ -81,7 +81,7 @@ describe('!pair run task descriptions', () => {
   });
 
   it('forwards the literal -- description when Linear is unavailable', async () => {
-    mocks.getIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
+    mocks.getScopedIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
     const msg = message();
     const description = 'Check the parser literally: emoji 🧪, quotes "ok", and `code`.';
 
@@ -99,7 +99,7 @@ describe('!pair run task descriptions', () => {
   });
 
   it('treats -- as the description delimiter and defaults the project for the short direct-run form', async () => {
-    mocks.getIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
+    mocks.getScopedIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
     const msg = message();
 
     await handlePair(msg as never, [
@@ -114,7 +114,7 @@ describe('!pair run task descriptions', () => {
   });
 
   it('keeps an explicit direct-run project when a description follows it', async () => {
-    mocks.getIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
+    mocks.getScopedIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
     const msg = message();
 
     await handlePair(msg as never, [
@@ -129,7 +129,7 @@ describe('!pair run task descriptions', () => {
   });
 
   it('keeps the existing direct-run form and uses the Linear description when available', async () => {
-    mocks.getIssue.mockResolvedValueOnce({
+    mocks.getScopedIssue.mockResolvedValueOnce({
       title: 'Existing Linear task',
       description: 'Description from Linear',
     });
@@ -150,7 +150,7 @@ describe('!pair run task descriptions', () => {
       project === 'OtherProject' ? '/workspace/OtherProject' : project,
     );
     mocks.isRepositoryAllowedInChannel.mockReturnValueOnce(false);
-    mocks.getIssue.mockResolvedValueOnce({
+    mocks.getScopedIssue.mockResolvedValueOnce({
       id: 'issue-1',
       identifier: 'AX-1',
       title: 'Cross-project issue',
@@ -172,7 +172,7 @@ describe('!pair run task descriptions', () => {
     );
     mocks.isRepositoryAllowedInChannel.mockReturnValueOnce(true);
     mocks.isDirty.mockResolvedValueOnce(true);
-    mocks.getIssue.mockResolvedValueOnce({
+    mocks.getScopedIssue.mockResolvedValueOnce({
       id: 'issue-2',
       identifier: 'AX-2',
       title: 'Protect existing work',
@@ -195,7 +195,7 @@ describe('!pair run task descriptions', () => {
       project === 'OpenSwarm' ? '/workspace/OpenSwarm' : project,
     );
     mocks.isRepositoryAllowedInChannel.mockImplementation((_msg, project) => project === '/workspace/OpenSwarm');
-    mocks.getIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
+    mocks.getScopedIssue.mockRejectedValueOnce(new Error('Linear unavailable'));
     const msg = message();
 
     await handlePair(msg as never, ['run', 'SMOKE-005', 'OpenSwarm', '--', 'Use', 'the', 'canonical', 'repository.']);

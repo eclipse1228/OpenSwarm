@@ -35,6 +35,7 @@ import {
   isHumanSurfaceReadOnlyEnabled,
 } from '../mcp/humanSurfacePolicy.js';
 import { wireSandboxExecutorIfEnabled } from '../sandboxExecutor/runtime.js';
+import { loadRepoMetadata } from '../support/repoMetadata.js';
 
 let state: ServiceState = {
   running: false,
@@ -47,6 +48,18 @@ let githubCheckTimer: NodeJS.Timeout | null = null;
 let prProcessor: PRProcessor | null = null;
 let memoryCompactionJob: Cron | null = null;
 let serviceInstanceLock: ServiceInstanceLock | null = null;
+
+async function mappedLinearProjectIds(projectPaths: string[]): Promise<string[]> {
+  const mappings = await Promise.all(projectPaths.map(async (projectPath) => {
+    try {
+      return (await loadRepoMetadata(projectPath))?.linear?.projectId;
+    } catch (error) {
+      console.warn(`[Service] Could not read Linear mapping for ${projectPath}: ${(error as Error).message}`);
+      return undefined;
+    }
+  }));
+  return [...new Set(mappings.filter((projectId): projectId is string => !!projectId))];
+}
 
 /**
  * Get PR Processor instance (for web dashboard)
@@ -126,10 +139,12 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
   // from `openswarm auth login --provider linear`) over a personal API key.
   // Startup uses ensureValidToken (refreshes if near expiry). NOTE: long-running
   // OAuth-token refresh during runtime is a follow-up — startup token is used.
+  let hasLinearOAuthProfile = false;
   if (config.linearTeamId) {
     const { AuthProfileStore, ensureValidToken } = await import('../auth/index.js');
     const authStore = new AuthProfileStore();
-    if (authStore.getProfile('linear:default')) {
+    hasLinearOAuthProfile = !!authStore.getProfile('linear:default');
+    if (hasLinearOAuthProfile) {
       console.log('🔗 Initializing Linear client (OAuth)...');
       const token = await ensureValidToken(authStore, 'linear:default');
       linear.initLinear(token, config.linearTeamId, true);
@@ -143,6 +158,20 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
     }
   } else {
     console.log('⏭ Linear not configured — skipping');
+  }
+
+  // Set the mapped Linear-project boundary before Discord logs in. Otherwise a
+  // fast `!issues` or `!issue` message could observe the legacy team-wide
+  // lookup during service startup.
+  const linearConfigured = !!config.linearTeamId && (hasLinearOAuthProfile || !!config.linearApiKey);
+  const linearProjectIds = config.autonomous && linearConfigured
+    ? await mappedLinearProjectIds(config.autonomous.allowedProjects)
+    : [];
+  if (config.autonomous) {
+    // A restart can retain Linear's module client even when the new config has
+    // no valid credential. Keep Discord fail-closed rather than reverting to
+    // that old client's team-wide default.
+    linear.setDefaultLinearProjectIds(linearConfigured ? linearProjectIds : []);
   }
 
   // Discord initialization (optional)
@@ -258,10 +287,17 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
     // store (no external account). The Linear fetcher closure is preserved
     // verbatim — slim mode (1 resolver call/issue vs 3) + comment hydration +
     // task-state enrichment — and only used by LinearTaskSource.
-    const linearConfigured = !!(config.linearApiKey && config.linearTeamId);
-    const selectedTaskSource = selectTaskSource(linearConfigured, async () => {
+    if (linearConfigured && linearProjectIds.length === 0) {
+      console.warn('[Service] No mapped Linear projects found — autonomous Linear fetches will fail closed');
+    }
+    const selectedTaskSource = selectTaskSource(linearConfigured, async (fetchOptions) => {
       await linear.ensureLinearAuthFresh(); // refresh OAuth token (no-op for API key) each heartbeat
-      const issues = await linear.getMyIssues({ slim: true, timeoutMs: 300000 });
+      const issues = await linear.getMyIssues({
+        slim: true,
+        timeoutMs: 300000,
+        projectIds: linearProjectIds,
+        includeBacklog: fetchOptions?.includeBacklog ?? config.autonomous?.includeBacklog === true,
+      });
       const { linearIssueToTask } = await import('../orchestration/decisionEngine.js');
       return issues.map((issue: any) => {
         updateTaskLinearState(issue.id, issue.state);
@@ -342,6 +378,7 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
       backlogGrooming: config.autonomous.backlogGrooming,
       // Git worktree mode
       worktreeMode: config.autonomous.worktreeMode ?? false,
+      publishPullRequests: config.autonomous.publishPullRequests,
       // Pipeline guards
       guards: config.autonomous.guards,
       verify: config.autonomous.verify,
@@ -350,6 +387,7 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
       maxReflections: config.autonomous.maxReflections,
       jobProfiles: config.autonomous.jobProfiles,
       coordinationBoardIssueId: config.autonomous.coordinationBoardIssueId,
+      coordinationBoardImport: config.autonomous.coordinationBoardImport,
       mcpPolicies: config.autonomous.mcpPolicies,
       adapterRouting: config.autonomous.adapterRouting,
       periodicReviews: config.autonomous.periodicReviews,
@@ -369,9 +407,12 @@ async function startServiceLocked(config: SwarmConfig): Promise<void> {
       const store = (await import('../coordination/coordinationStore.js')).getCoordinationStore();
       const hub = (await import('./eventHub.js')).getEventHub();
       hub.on('coordination:published', (event) => { void board.publish(event).catch((error) => console.error('[CoordinationBoard] publish failed:', error)); });
-      // Import messages posted by another host/session. Local fingerprinting makes this idempotent.
-      const remote = await board.read().catch((error) => { console.error('[CoordinationBoard] initial read failed:', error); return []; });
-      for (const event of remote) await store.publish(event);
+      if (config.autonomous.coordinationBoardImport === true) {
+        // Remote board comments are untrusted unless this explicit multi-host
+        // mode is separately authenticated. The local pilot is write-only.
+        const remote = await board.read().catch((error) => { console.error('[CoordinationBoard] initial read failed:', error); return []; });
+        for (const event of remote) await store.publish(event);
+      }
       console.log(`[Service] Coordination board registered (${config.autonomous.coordinationBoardIssueId})`);
     }
     web.setWebRunner(runnerInstance);

@@ -779,6 +779,14 @@ export async function executeTool(
       }
 
       case 'search_files': {
+        if (typeof args.pattern !== 'string' || !args.pattern.trim()
+          || typeof args.path !== 'string' || !args.path.trim()) {
+          return {
+            tool_call_id: callId,
+            content: 'INVALID_TOOL_ARGUMENTS: search_files requires non-empty string "pattern" and "path" arguments.',
+            is_error: true,
+          };
+        }
         const searchPath = validatePath(args.path, cwd, {
           allowMainCheckoutRead: !execOptions?.readOnly,
           allowWarehouseRead: true,
@@ -787,7 +795,11 @@ export async function executeTool(
         if (args.glob) {
           rgArgs.push('--glob', args.glob);
         }
-        rgArgs.push(args.pattern, searchPath);
+        // Keep the model-provided pattern in an option value. A positional
+        // `--...` pattern is parsed by ripgrep as another flag (some flags can
+        // execute a configured preprocessor), so it must never occupy the
+        // option-parsing position.
+        rgArgs.push('--regexp', args.pattern, searchPath);
 
         try {
           const { stdout } = await execFileAsync('rg', rgArgs, { timeout: 10000, maxBuffer: 1024 * 256 });

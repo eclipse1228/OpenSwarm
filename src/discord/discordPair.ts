@@ -200,7 +200,7 @@ async function handlePairStart(msg: Message, taskId?: string): Promise<void> {
   if (taskId) {
     // Look up specific issue
     try {
-      task = await linear.getIssue(taskId);
+      task = await linear.getScopedIssue(taskId);
     } catch {
       await msg.reply(`❌ ${t('discord.errors.issueNotFound', { id: taskId || '' })}`);
       return;
@@ -268,13 +268,17 @@ async function handlePairRun(
   let taskDescription = inlineDescription ?? '';
 
   try {
-    const issue = await linear.getIssue(taskId);
+    const issue = await linear.getScopedIssue(taskId);
     if (issue) {
       taskTitle = issue.title;
       // An explicit Discord instruction is authoritative for this direct-run
       // command. Preserve the tracker description for the existing ID-only
       // form, where no inline instruction was supplied.
       if (inlineDescription === undefined) taskDescription = issue.description || '';
+    } else if (inlineDescription === undefined
+      && (/^[A-Z]+-\d+$/.test(taskId) || /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(taskId))) {
+      await msg.reply('⛔ This Linear issue is not in the configured project scope.');
+      return;
     }
   } catch {
     // Continue even if Linear lookup fails (use taskId as title)

@@ -107,7 +107,7 @@ const MAX_EVENTS = 2_000;
 const MAX_SUMMARY = 500;
 const MAX_DETAIL = 4_000;
 const SECRET_FIELD = /(token|secret|password|authorization|cookie|api[-_]?key)/i;
-const SECRET_VALUE = /(bearer\s+[A-Za-z0-9._~+/-]+|(?:sk|ghp|xox[baprs])_?[-A-Za-z0-9_]{8,})/gi;
+const SECRET_VALUE = /(bearer\s+[A-Za-z0-9._~+/-]+|(?:sk|ghp|xox[baprs])_?[-A-Za-z0-9_]{8,}|(?:mfa\.)?[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}|\blin_api_[A-Za-z0-9_-]{8,}|\b[A-Za-z][A-Za-z0-9_-]{0,64}(?:token|secret|password|api[-_]?key)\s*[:=]\s*(?:Bearer\s+)?(?:"[^"]+"|'[^']+'|[^\s,;]+))/gi;
 
 function emptyState(): CoordinationState {
   return { version: 1, nextSeq: 1, events: [], consumed: {} };
@@ -127,8 +127,12 @@ function parseState(value: unknown): CoordinationState {
   };
 }
 
-function cleanText(value: string, limit: number): string {
+export function redactCoordinationText(value: string, limit: number): string {
   return value.replace(SECRET_VALUE, '[redacted]').slice(0, limit);
+}
+
+function cleanText(value: string, limit: number): string {
+  return redactCoordinationText(value, limit);
 }
 
 export function redactCoordinationMetadata(

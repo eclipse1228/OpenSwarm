@@ -93,6 +93,10 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]';
 }
 
+function isTailscaleMagicDnsHostname(hostname: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9-]+)*\.ts\.net$/i.test(hostname);
+}
+
 function extractBearerToken(header: string | undefined): string | null {
   if (!header) return null;
   // Linear-time parse (no regex): 'Bearer' + one space/tab + token. A
@@ -123,16 +127,12 @@ function isTrustedLocalOrigin(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;
 
-  if (!isAllowedOrigin(origin)) return false;
-
   let originUrl: URL;
   try {
     originUrl = new URL(origin);
   } catch {
     return false;
   }
-
-  if (originUrl.hostname === 'tauri.localhost') return true;
 
   const host = req.headers.host;
   if (!host) return false;
@@ -145,6 +145,16 @@ function isTrustedLocalOrigin(req: IncomingMessage): boolean {
   }
 
   const sameHost = originUrl.hostname === hostUrl.hostname;
+  // Tailscale Serve terminates the tailnet connection and forwards to this
+  // loopback server. Its MagicDNS origin is neither localhost nor a 100.x
+  // address, but it remains safe only when it exactly matches the proxied Host.
+  const servedThroughMagicDns = isLoopbackAddress(req.socket.remoteAddress)
+    && sameHost
+    && isTailscaleMagicDnsHostname(originUrl.hostname);
+  if (!isAllowedOrigin(origin) && !servedThroughMagicDns) return false;
+
+  if (originUrl.hostname === 'tauri.localhost') return true;
+
   const loopbackAlias = isLoopbackHostname(originUrl.hostname) && isLoopbackHostname(hostUrl.hostname);
   return (sameHost || loopbackAlias) && getEffectivePort(originUrl) === getEffectivePort(hostUrl);
 }

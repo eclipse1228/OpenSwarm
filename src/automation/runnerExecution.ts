@@ -29,7 +29,7 @@ import { formatTaskDescription, parseFileScopeFromDescription } from '../linear/
 import { findDuplicateSibling, type ExistingSibling } from './duplicateSubIssueGuard.js';
 import { broadcastEvent } from '../core/eventHub.js';
 import type { Notifier, NotificationContext } from '../notify/notifier.js';
-import type { ITaskSource } from './taskSource.js';
+import type { ITaskSource, TaskFetchOptions } from './taskSource.js';
 import {createWorktree, hasRecoverableWorktree, preserveWorktree, removeWorktree, WorktreeCoordinationError,  } from '../support/worktreeManager.js';
 import type { WorktreeInfo } from '../support/worktreeManager.js';
 import type { ExecutionDurabilityHooks } from './durableRunCoordinator.js';
@@ -128,14 +128,14 @@ export function getTaskSource(): ITaskSource | null {
 // Track consecutive fetch failures for visibility
 let fetchFailureCount = 0;
 
-export async function fetchLinearTasks(): Promise<{ tasks: TaskItem[]; error?: string }> {
+export async function fetchLinearTasks(options?: TaskFetchOptions): Promise<{ tasks: TaskItem[]; error?: string }> {
   if (!taskSource) {
     console.log('[AutonomousRunner] No task source registered');
     return { tasks: [], error: 'No task source registered' };
   }
 
   try {
-    const tasks = await taskSource.fetchTasks();
+    const tasks = await taskSource.fetchTasks(options);
     if (fetchFailureCount > 0) {
       console.log(`[AutonomousRunner] Task fetch recovered after ${fetchFailureCount} failures`);
     }
@@ -168,8 +168,10 @@ export interface ExecutionContext {
   decompositionAutoBacklog?: boolean;
   getRolesForProject: (projectPath: string) => DefaultRolesConfig | undefined;
   reportToDiscord: (message: string | EmbedBuilder, context?: NotificationContext) => Promise<void>;
-  /** Git worktree mode: work in an isolated worktree per issue, auto-create PR */
+  /** Git worktree mode: work in an isolated worktree per issue. */
   worktreeMode?: boolean;
+  /** Permit automatic commit, push, and pull-request creation from worktrees. */
+  publishPullRequests?: boolean;
   /** Job profiles for on-the-fly model selection */
   jobProfiles?: JobProfile[];
   /** Trigger immediate heartbeat (called after decomposition to pick up new sub-issues) */
@@ -1200,32 +1202,34 @@ export async function executePipeline(
       result.finalStatus = 'infra_error';
     }
 
-    const parkedPublished = await publishParkedIfNeeded(worktreeInfo, task, result, ctx.durability);
+    if (ctx.publishPullRequests !== false) {
+      const parkedPublished = await publishParkedIfNeeded(worktreeInfo, task, result, ctx.durability);
 
-    // The repository, not the daemon, decides whether its published PRs get
-    // the agentic fresh review (openswarm.json `publication.freshReview`).
-    const freshReview = worktreeInfo ? await loadPublicationFreshReview(worktreeInfo.originalPath) : false;
-    await publishApprovedWork(worktreeInfo, task, result, ctx.durability,
-      freshReview ? async ({ prUrl, worktreeInfo: publishedWorktree }) => {
-        // Loaded on demand: the review pulls in the whole PR processor, which
-        // only an opted-in repository ever needs.
-        const { reviewPublishedPullRequest } = await import('./prPublicationReview.js');
-        const review = await reviewPublishedPullRequest({
-          prUrl,
-          projectPath: publishedWorktree.originalPath,
-          roles,
-          securityAudit: ctx.securityAudit,
-        });
-        const status = review.success ? 'approved' : review.gateRan ? 'changes requested' : 'did not run';
-        broadcastEvent({
-          type: 'log',
-          data: { taskId: task.issueId || task.id, stage: 'pr-review', line: `PR-time fresh review ${status}${review.error ? `: ${review.error}` : ''}` },
-        });
-      } : undefined,
-    );
-    if (!parkedPublished) await publishParkedIfNeeded(worktreeInfo, task, result, ctx.durability);
+      // The repository, not the daemon, decides whether its published PRs get
+      // the agentic fresh review (openswarm.json `publication.freshReview`).
+      const freshReview = worktreeInfo ? await loadPublicationFreshReview(worktreeInfo.originalPath) : false;
+      await publishApprovedWork(worktreeInfo, task, result, ctx.durability,
+        freshReview ? async ({ prUrl, worktreeInfo: publishedWorktree }) => {
+          // Loaded on demand: the review pulls in the whole PR processor, which
+          // only an opted-in repository ever needs.
+          const { reviewPublishedPullRequest } = await import('./prPublicationReview.js');
+          const review = await reviewPublishedPullRequest({
+            prUrl,
+            projectPath: publishedWorktree.originalPath,
+            roles,
+            securityAudit: ctx.securityAudit,
+          });
+          const status = review.success ? 'approved' : review.gateRan ? 'changes requested' : 'did not run';
+          broadcastEvent({
+            type: 'log',
+            data: { taskId: task.issueId || task.id, stage: 'pr-review', line: `PR-time fresh review ${status}${review.error ? `: ${review.error}` : ''}` },
+          });
+        } : undefined,
+      );
+      if (!parkedPublished) await publishParkedIfNeeded(worktreeInfo, task, result, ctx.durability);
+    }
 
-    keepWorktree = !(result.success && result.finalStatus === 'approved');
+    keepWorktree = ctx.publishPullRequests === false || !(result.success && result.finalStatus === 'approved');
     return result;
   } finally {
     // Success (PR created) → remove as before. Any non-success outcome
@@ -1236,7 +1240,7 @@ export async function executePipeline(
     // (keepWorktree=false) clean up as before.
     if (worktreeInfo) {
       const cleanup = keepWorktree
-        ? preserveWorktree(worktreeInfo, 'session did not succeed')
+        ? preserveWorktree(worktreeInfo, ctx.publishPullRequests === false ? 'automatic publication disabled' : 'session did not succeed')
         : removeWorktree(worktreeInfo);
       await cleanup.catch((err) => console.warn('[Worktree] Cleanup failed:', err));
     }

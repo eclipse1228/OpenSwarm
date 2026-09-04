@@ -316,7 +316,8 @@ describe('ensureValidToken refresh failures', () => {
     expect((err as InstanceType<typeof TokenRefreshError>).status).toBe(400);
     // The shape the CLI classifier matches on, asserted independently of the class.
     expect((err as Error).name).toBe('TokenRefreshError');
-    expect((err as Error).message).toContain('Refresh token revoked');
+    expect((err as Error).message).toContain('Token refresh failed (400)');
+    expect((err as Error).message).not.toContain('Refresh token revoked');
   });
 
   it('preserves a 429 status rather than flattening every failure to one kind', async () => {

@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "projectName": "OpenSwarm",
   "linear": {
-    "teamId": "49b7af95-3cac-4a56-adc7-f19d77dfbe9b",
-    "teamKey": "INT",
-    "projectId": "74a9d092-7b3c-4d4d-a998-a2c9a8f08e83",
+    "teamId": "bd97e9e8-4672-4dda-9c49-099961305a24",
+    "teamKey": "AGE",
+    "projectId": "5ff47136-784e-44ba-9a76-cec4c6df720d",
     "projectName": "OpenSwarm"
   },
   "publication": {
-    "freshReview": true
+    "freshReview": false
   }
 }

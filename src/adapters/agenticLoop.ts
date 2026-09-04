@@ -768,7 +768,16 @@ export async function runAgenticLoop(options: AgenticLoopOptions): Promise<Agent
   // 올려 보내 reviewer/worker 호출자가 명시적으로 처리하게 한다. (INT-1442, INT-2879)
   if (!finalText && apiCallCount > 0) {
     const maxFinalAnswerAttempts = 2;
-    messages.push({
+    // Some OpenAI-compatible providers validate tool-call/message pairing even
+    // when the follow-up request exposes no tools. A final answer does not need
+    // the raw tool transcript, and retaining it can make a valid recovery call
+    // fail with a provider 400. Keep the original task/context, but omit both
+    // sides of every prior tool exchange for this no-tools recovery request.
+    const salvageMessages: ChatMessage[] = messages.filter((message) =>
+      message.role !== 'tool'
+      && !(message.role === 'assistant' && message.tool_calls?.length),
+    );
+    salvageMessages.push({
       role: 'user',
       content:
         "You've reached this turn's step limit, so stop calling tools now. Using everything " +
@@ -781,7 +790,7 @@ export async function runAgenticLoop(options: AgenticLoopOptions): Promise<Agent
         onLog?.('▸ Final answer turn (no tools) — loop ended without a final message');
       } else {
         onLog?.('↻ Final answer was empty — retrying once (no tools)');
-        messages.push({
+        salvageMessages.push({
           role: 'user',
           content:
             'Your previous final-answer attempt returned no user-visible text. Respond now with ' +
@@ -791,7 +800,7 @@ export async function runAgenticLoop(options: AgenticLoopOptions): Promise<Agent
 
       try {
         const salvageStartedAt = Date.now();
-        const response = await callApi(messages, []);
+        const response = await callApi(salvageMessages, []);
         accountUsage(response.usage, salvageStartedAt);
         apiCallCount++;
         const content = response.choices?.[0]?.message?.content;
