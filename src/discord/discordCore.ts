@@ -19,7 +19,6 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { SwarmEvent, AgentStatus } from '../core/types.js';
 import { getAdapter, spawnCli } from '../adapters/index.js';
-import * as memory from '../memory/index.js';
 import * as dev from '../support/dev.js';
 import { t, getPrompts, getDateLocale } from '../locale/index.js';
 import { atomicWriteFileSync } from '../support/atomicFile.js';
@@ -249,6 +248,24 @@ export async function resolveProjectPath(hints: string[]): Promise<string | null
 // OpenSwarm system prompt - loaded from locale
 export function getSystemPrompt(): string {
   return getPrompts().systemPrompt;
+}
+
+/**
+ * A Discord conversation is not an autonomous coding task.  Keeping this
+ * separate from the worker prompt avoids a greeting being rendered as a fake
+ * change report (the worker prompt requires every report to list files and
+ * commands).  The companion run also has every tool surface disabled.
+ */
+function getConversationPrompt(): string {
+  return `# OpenSwarm Discord conversation
+
+You are having a brief, natural conversation with an authorized operator.
+Respond in the operator's language and answer only what they asked.
+
+This is not a task execution, code review, status report, or command. Do not
+claim that files were modified, commands were run, an issue changed state, or
+an agent completed work. If the operator wants an operational action, tell
+them to use the relevant ! command. No tools are available in this conversation.`;
 }
 
 // Chat history type
@@ -916,7 +933,10 @@ export async function handleChat(msg: Message): Promise<void> {
   const content = msg.content.trim();
   if (!content) return;
 
-  console.log(`[OpenSwarm] Chat from ${msg.author.username}: ${content.slice(0, 50)}...`);
+  // Free-form operator chat is intentionally ephemeral. Do not write its
+  // content to process logs, durable history, or cross-channel long-term
+  // memory; only the in-memory, per-channel context below is retained.
+  console.log(`[OpenSwarm] Chat received from ${msg.author.username}`);
 
   const channel = msg.channel as TextChannel;
   const channelId = msg.channel.id;
@@ -951,26 +971,11 @@ export async function handleChat(msg: Message): Promise<void> {
     const currentMessageFormatted = `[${new Date().toLocaleTimeString(getDateLocale(), { hour: '2-digit', minute: '2-digit' })}] ${msg.author.username}: ${content}`;
     const historyContext = buildHistoryContext(channelId, currentMessageFormatted);
 
-    // 2. Semantic search (long-term memory)
-    const memories = await memory.searchMemory(content, {
-      limit: 5,
-      minSimilarity: 0.4,
-      minTrust: 0.5,
-    });
-    const memoryContext = memory.formatMemoryContext(memories);
-
-    // 3. Build prompt
-    let prompt = getSystemPrompt();
-
-    if (projectPath) {
-      prompt += `\n\n## ${t('discord.chatContext')}\n- **${t('discord.projectContext', { path: projectPath })}**`;
-    }
+    // 2. Build prompt. General conversation intentionally does not consult
+    // long-term memory: it can contain another channel's task context.
+    let prompt = getConversationPrompt();
 
     prompt += `\n\n## Chat Context\n${historyContext}`;
-
-    if (memoryContext) {
-      prompt += `\n\n${memoryContext}`;
-    }
 
     console.log(`[OpenSwarm] History context: ${channelHistoryMap.get(channelId)?.length ?? 0} messages`);
 
@@ -992,15 +997,6 @@ export async function handleChat(msg: Message): Promise<void> {
       await msg.reply(chunk);
     }
 
-    await saveChatHistory({
-      timestamp: new Date().toISOString(),
-      user: msg.author.username,
-      userId: msg.author.id,
-      message: content,
-      response: response,
-    });
-
-    await memory.saveConversation(channelId, msg.author.id, msg.author.username, content, response);
     console.log(`[OpenSwarm] Response sent (${response.length} chars)`);
 
   } catch (err) {
@@ -1025,12 +1021,24 @@ async function runWithAdapter(
     prompt,
     cwd,
     timeoutMs: 120_000,
-    maxTurns: 10,
+    // General chat must never become a code-worker run.  In particular, do
+    // not pass its free-form user content to any tool or to worker-result
+    // parsing, which turns a model's imagined work report into an assertion.
+    maxTurns: 1,
+    readOnly: true,
+    enableTools: false,
+    shellTools: false,
+    filesystemTools: false,
+    webTools: false,
+    memoryTools: false,
+    diagnosticsTool: false,
   });
-
-  const workerResult = adapter.parseWorkerOutput(raw);
-  const toolCalls = workerResult.commands ?? [];
-  return { result: workerResult.summary ?? raw.stdout.trim(), toolCalls };
+  if (raw.exitCode !== 0) {
+    throw new Error(`${adapter.name} conversation failed: ${raw.stderr || raw.stdout || `exit ${raw.exitCode}`}`);
+  }
+  const result = raw.stdout.trim();
+  if (!result) throw new Error(`${adapter.name} conversation returned no text`);
+  return { result, toolCalls: [] };
 }
 
 
